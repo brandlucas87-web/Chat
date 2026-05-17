@@ -16,11 +16,21 @@ local Window = Rayfield:CreateWindow({
 })
 
 local Tab = Window:CreateTab("Main", 4483362458)
+local MachinesTab = Window:CreateTab("Machines", 4483362458)
 
 --// Config
 local SelectedEgg = "Tech Egg"
 local TripleEgg = true
 local AutoOpen = false
+
+--// Machines Config
+local Machines = {
+    Bank = false,
+    DarkMatter = false,
+    Golden = false,
+    Rainbow = false,
+    Ghost = false
+}
 
 --// Remote
 local Remote = workspace
@@ -65,6 +75,86 @@ Tab:CreateToggle({
     Flag = "AutoEgg",
     Callback = function(Value)
         AutoOpen = Value
+    end,
+})
+
+--// Machines Tab - Bank Toggle
+MachinesTab:CreateToggle({
+    Name = "Bank",
+    CurrentValue = false,
+    Flag = "BankToggle",
+    Callback = function(Value)
+        Machines.Bank = Value
+        local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local Bank = PlayerGui:FindFirstChild("Bank")
+        
+        if Bank then
+            Bank.Enabled = Value
+        end
+    end,
+})
+
+--// Machines Tab - DarkMatter Toggle
+MachinesTab:CreateToggle({
+    Name = "DarkMatter",
+    CurrentValue = false,
+    Flag = "DarkMatterToggle",
+    Callback = function(Value)
+        Machines.DarkMatter = Value
+        local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local DarkMatter = PlayerGui:FindFirstChild("DarkMatter")
+        
+        if DarkMatter then
+            DarkMatter.Enabled = Value
+        end
+    end,
+})
+
+--// Machines Tab - Golden Toggle
+MachinesTab:CreateToggle({
+    Name = "Golden",
+    CurrentValue = false,
+    Flag = "GoldenToggle",
+    Callback = function(Value)
+        Machines.Golden = Value
+        local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local Golden = PlayerGui:FindFirstChild("Golden")
+        
+        if Golden then
+            Golden.Enabled = Value
+        end
+    end,
+})
+
+--// Machines Tab - Rainbow Toggle
+MachinesTab:CreateToggle({
+    Name = "Rainbow",
+    CurrentValue = false,
+    Flag = "RainbowToggle",
+    Callback = function(Value)
+        Machines.Rainbow = Value
+        local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local Rainbow = PlayerGui:FindFirstChild("Rainbow")
+        
+        if Rainbow then
+            Rainbow.Enabled = Value
+        end
+    end,
+})
+
+--// Machines Tab - Ghost Toggle
+MachinesTab:CreateToggle({
+    Name = "Ghost",
+    CurrentValue = false,
+    Flag = "GhostToggle",
+    Callback = function(Value)
+        Machines.Ghost = Value
+        local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+        local Ghost = PlayerGui:FindFirstChild("Ghost")
+        
+        if Ghost then
+            Ghost.Enabled = Value
+        end
     end,
 })
 
