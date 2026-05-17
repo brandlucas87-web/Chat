@@ -2,6 +2,7 @@
 --  CHAT SYSTEM - LocalScript único (executor) + Python server
 --  Comunicação via HTTP polling com request()
 --  Versão estendida: cache local, fila de envio, reconexão
+--  Fix: avoid persisting/duplicating system/welcome messages
 -- ============================================================
 
 local Players        = game:GetService("Players")
@@ -36,10 +37,7 @@ local function saveToLocalFile(filename, tbl)
         if canUseFileAPI() then
             writefile(filename, s)
         else
-            -- fallback: attempt to store on Instance (not persistent across restarts),
-            -- but at least avoid errors and print notice
             warn("writefile/readfile not available in this executor — local persistence disabled. Attempted save to " .. filename)
-            -- Optionally store in a global for runtime only:
             _G.__chat_storage = _G.__chat_storage or {}
             _G.__chat_storage[filename] = s
         end
@@ -70,6 +68,14 @@ end
 -- ── Estruturas em memória ────────────────────────────────────
 local outgoingQueue = loadFromLocalFile(QUEUE_FILE) or {}      -- { {sender=..., message=..., ts=...}, ... }
 local messageHistory = loadFromLocalFile(HISTORY_FILE) or {}   -- { {id=..., sender=..., message=..., system=..., ts=...}, ... }
+
+-- Cleanup: remove entries without an id (these were causing duplicated welcome/system messages)
+local cleanedHistory = {}
+for _, m in ipairs(messageHistory) do
+    if m.id then table.insert(cleanedHistory, m) end
+end
+messageHistory = cleanedHistory
+
 local seenIds = {}
 for _, m in ipairs(messageHistory) do if m.id then seenIds[m.id] = true end end
 
@@ -464,10 +470,11 @@ Players.PlayerRemoving:Connect(function(p) playerBubbles[p.Name] = nil end)
 --  RECEBER mensagem (exibe na UI + cria bubble)
 -- ============================================================
 local function addToHistory(entry)
+    -- Only persist messages that have a server-assigned id to avoid duplicating local/system messages
+    if not entry or not entry.id then return end
     if entry.id and seenIds[entry.id] then return end
     if entry.id then seenIds[entry.id] = true end
     table.insert(messageHistory, entry)
-    -- manter ordenação por id/ts se quiser; aqui assumimos append em ordem cronológica
     saveToLocalFile(HISTORY_FILE, messageHistory)
 end
 
@@ -482,11 +489,10 @@ local function onMessage(senderName, message, isSystemMessage, opts)
             updateToggleText()
         end
     end
-    -- Se server forneceu id, use-o; caso contrário, salve como id=nil
-    if opts.entry then
+
+    -- Persist to history only if server provided a full entry with id
+    if opts.entry and opts.entry.id then
         addToHistory(opts.entry)
-    else
-        addToHistory({ id = opts.id, sender = senderName, message = message, system = isSystemMessage, ts = os.time() })
     end
 end
 
@@ -494,7 +500,6 @@ end
 --  HTTP — enviar mensagem ao servidor
 -- ============================================================
 local function httpPostRaw(path, body)
-    -- request() é a função global disponível em executors (Synapse, KRNL, etc.)
     local ok, res = pcall(request, {
         Url    = SERVER_URL .. path,
         Method = "POST",
@@ -519,17 +524,14 @@ end
 
 local function trySendOutgoing()
     if #outgoingQueue == 0 then return end
-    -- Tentar enviar em ordem (1..n)
     local i = 1
     while i <= #outgoingQueue do
         local e = outgoingQueue[i]
         local res = httpPostRaw("/send", { sender = e.sender, message = e.message, system = e.system or false })
         if res and res.StatusCode == 200 then
-            -- sucesso: remover da fila
             table.remove(outgoingQueue, i)
             saveToLocalFile(QUEUE_FILE, outgoingQueue)
         else
-            -- falhou -> manter e tentar depois
             break
         end
     end
@@ -542,10 +544,9 @@ local function httpPost(path, body)
         return res
     else
         connected = false
-        -- Se falhar ao enviar uma mensagem de usuário, enfileire
         if path == "/send" and body and body.sender and body.message then
             enqueueOutgoing({ sender = body.sender, message = body.message, system = body.system or false, ts = os.time() })
-            -- mostra na UI como enfileirada (para feedback imediato)
+            -- mostra na UI como enfileirada (para feedback imediato) but do NOT persist to history
             onMessage(body.sender, body.message, body.system or false, { queued = true })
         end
         return nil
@@ -590,7 +591,6 @@ end
 
 local function repopulateFromHistory()
     clearUI()
-    -- Ordena por id/ts para evitar bagunça
     table.sort(messageHistory, function(a,b)
         if a.id and b.id then return a.id < b.id end
         return (a.ts or 0) < (b.ts or 0)
@@ -601,17 +601,14 @@ local function repopulateFromHistory()
 end
 
 local function onReconnect()
-    -- Tenta enviar fila pendente
     trySendOutgoing()
 
-    -- Re-sincroniza histórico com servidor: buscar mensagens após 0 para garantir tudo
     local res = httpGet("/messages?after=0")
     if res and res.StatusCode == 200 then
         local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
         if ok and data and data.messages then
-            -- Adiciona apenas mensagens novas ao histórico (controlado por seenIds)
             for _, entry in ipairs(data.messages) do
-                if not (entry.id and seenIds[entry.id]) then
+                if entry.id and not seenIds[entry.id] then
                     addToHistory(entry)
                 end
                 if entry.id and entry.id > lastMessageId then lastMessageId = entry.id end
@@ -619,7 +616,6 @@ local function onReconnect()
         end
     end
 
-    -- Re-popular a UI do zero com o histórico salvo + mostrar que houve reconexão
     repopulateFromHistory()
     onMessage("Sistema", "Reconectado. Mensagens pendentes enviadas (se houver).", true)
 end
@@ -636,28 +632,23 @@ task.spawn(function()
                 return HttpService:JSONDecode(res.Body)
             end)
             if ok and data and data.messages then
-                -- Se antes estávamos desconectados, e agora recebemos resposta -> reconectou
                 if not connected then
                     onReconnect()
                 end
                 for _, entry in ipairs(data.messages) do
-                    if not (entry.id and seenIds[entry.id]) then
+                    if entry.id and not seenIds[entry.id] then
                         lastMessageId = math.max(lastMessageId, entry.id or lastMessageId)
                         addToHistory(entry)
                         onMessage(entry.sender, entry.message, entry.system or false, { entry = entry })
                     end
                 end
             else
-                -- resposta inesperada (JSON inválido) conta como desconexão
                 connected = false
             end
         else
-            -- Não recebeu -> estamos desconectados; iniciar tentativas de reconexão periódicas
             if not tryingReconnect then
                 tryingReconnect = true
-                -- notificamos o usuário
                 onMessage("Sistema", "Desconectado do servidor. As mensagens serão enfileiradas localmente.", true)
-                -- tenta reconectar em background a cada 2 segundos até achar conexão
                 task.spawn(function()
                     while not connected do
                         task.wait(2)
@@ -697,6 +688,7 @@ end)
 -- Re-popula UI do histórico salvo (se houver) ao iniciar
 repopulateFromHistory()
 
+-- Only show welcome once per session (do NOT persist welcome messages)
 onMessage("Sistema", "Bem-vindo! Pressione / para digitar. Conectando ao servidor...", true)
 
 -- Anunciar entrada no chat para todos via servidor (se falhar, será enfileirado)
