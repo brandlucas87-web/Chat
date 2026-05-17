@@ -19,7 +19,7 @@ local Tab = Window:CreateTab("Main", 4483362458)
 
 --// Config
 local SelectedEgg = "Tech Egg"
-local TripleEgg = false
+local TripleEgg = true
 local AutoOpen = false
 
 --// Remote
@@ -32,7 +32,7 @@ local Remote = workspace
 Tab:CreateDropdown({
     Name = "Egg Mode",
     Options = {"One Egg", "Triple Egg"},
-    CurrentOption = {"One Egg"},
+    CurrentOption = {"Triple Egg"},
     Flag = "EggMode",
     Callback = function(Options)
         local Option = Options[1]
