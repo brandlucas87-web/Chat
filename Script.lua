@@ -26,7 +26,7 @@ ChatGui.Name            = "ChatGui"
 ChatGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
 ChatGui.IgnoreGuiInset  = true
 ChatGui.ResetOnSpawn    = false
-ChatGui.Parent          = playerGui
+ChatGui.Parent          = game.CoreGui
 
 local ChatFrame = Instance.new("Frame")
 ChatFrame.Name                  = "ChatFrame"
