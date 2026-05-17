@@ -3,7 +3,7 @@
 --  Comunicação via HTTP polling com request()
 --  Versão estendida: cache local, fila de envio, reconexão
 --  Fixes/UI: avoid duplicating system messages, unread badge on top,
---  and click-to-copy messages to clipboard
+--  and click-to-copy messages
 -- ============================================================
 
 local Players        = game:GetService("Players")
@@ -658,7 +658,7 @@ local function onReconnect()
     end
 
     repopulateFromHistory()
-    onMessage("Sistema", "Reconectado. Mensagens pendentes enviadas (se houver).", true)
+    -- no system message here per request
 end
 
 -- ============================================================
@@ -689,7 +689,7 @@ task.spawn(function()
         else
             if not tryingReconnect then
                 tryingReconnect = true
-                onMessage("Sistema", "Desconectado do servidor. As mensagens serão enfileiradas localmente.", true)
+                -- no system message on disconnect per request
                 task.spawn(function()
                     while not connected do
                         task.wait(2)
@@ -697,7 +697,7 @@ task.spawn(function()
                         if test and test.StatusCode == 200 then
                             connected = true
                             tryingReconnect = false
-                            onMessage("Sistema", "Reconexão detectada. Sincronizando...", true)
+                            -- no system message on reconnection per request
                             onReconnect()
                             break
                         end
@@ -729,8 +729,7 @@ end)
 -- Re-popula UI do histórico salvo (se houver) ao iniciar
 repopulateFromHistory()
 
--- Only show welcome once per session (do NOT persist welcome messages)
-onMessage("Sistema", "Bem-vindo! Pressione / para digitar. Conectando ao servidor...", true)
+-- removed welcome system message per user request
 
 -- Anunciar entrada no chat para todos via servidor (se falhar, será enfileirado)
 httpPost("/send", {
