@@ -1,5 +1,4 @@
 --// Rayfield UI + Auto Egg Open
---// Executor Script
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
@@ -19,7 +18,7 @@ local Window = Rayfield:CreateWindow({
 local Tab = Window:CreateTab("Main", 4483362458)
 
 --// Config
-local SelectedEgg = "Cracked Egg"
+local SelectedEgg = "Tech Egg"
 local TripleEgg = false
 local AutoOpen = false
 
@@ -33,9 +32,11 @@ local Remote = workspace
 Tab:CreateDropdown({
     Name = "Egg Mode",
     Options = {"One Egg", "Triple Egg"},
-    CurrentOption = "One Egg",
+    CurrentOption = {"One Egg"},
     Flag = "EggMode",
-    Callback = function(Option)
+    Callback = function(Options)
+        local Option = Options[1]
+
         if Option == "Triple Egg" then
             TripleEgg = true
         else
@@ -48,6 +49,7 @@ Tab:CreateDropdown({
 Tab:CreateInput({
     Name = "Egg Name",
     PlaceholderText = "Ex: Bolt Egg",
+    Text = "Tech Egg",
     RemoveTextAfterFocusLost = false,
     Callback = function(Text)
         if Text and Text ~= "" then
