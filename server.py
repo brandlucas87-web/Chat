@@ -80,9 +80,9 @@ def upload_inventory():
             "error": str(e)
         }), 500
 
+@app.route("/user/<username>")
+def get_user(username):
 
-@app.route("/user/<username>", methods=["GET"])
-def get_user_inventory(username):
     with inventories_lock:
         inv = inventories.get(username.lower())
 
@@ -95,6 +95,17 @@ def get_user_inventory(username):
     return jsonify({
         "ok": True,
         "inventory": inv
+    })
+
+@app.route("/users")
+def users():
+
+    with inventories_lock:
+        user_list = list(inventories.keys())
+
+    return jsonify({
+        "ok": True,
+        "users": user_list
     })
 
 @app.route("/send", methods=["POST"])
