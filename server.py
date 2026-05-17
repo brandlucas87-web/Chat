@@ -13,6 +13,10 @@ messages_lock = threading.Lock()
 messages = []
 message_counter = 0
 
+# guardar inventories
+inventories = {}
+inventories_lock = threading.Lock()
+
 def add_message(sender: str, message: str, system: bool = False):
     global message_counter
 
@@ -39,6 +43,58 @@ def home():
     return jsonify({
         "ok": True,
         "message": "Roblox Chat Server Online"
+    })
+
+@app.route("/upload_inventory", methods=["POST"])
+def upload_inventory():
+    try:
+        data = request.get_json()
+
+        username = str(data.get("username", ""))[:32]
+        pets = data.get("pets", [])
+
+        if not username:
+            return jsonify({
+                "ok": False,
+                "error": "Missing username"
+            }), 400
+
+        with inventories_lock:
+            inventories[username.lower()] = {
+                "username": username,
+                "pets": pets,
+                "updated": time.time()
+            }
+
+        print(f"[INV] {username} uploaded {len(pets)} pets")
+
+        return jsonify({
+            "ok": True
+        })
+
+    except Exception as e:
+        print(e)
+
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/user/<username>", methods=["GET"])
+def get_user_inventory(username):
+    with inventories_lock:
+        inv = inventories.get(username.lower())
+
+    if not inv:
+        return jsonify({
+            "ok": False,
+            "error": "User not found"
+        }), 404
+
+    return jsonify({
+        "ok": True,
+        "inventory": inv
     })
 
 @app.route("/send", methods=["POST"])
