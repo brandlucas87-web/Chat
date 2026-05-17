@@ -2,7 +2,8 @@
 --  CHAT SYSTEM - LocalScript único (executor) + Python server
 --  Comunicação via HTTP polling com request()
 --  Versão estendida: cache local, fila de envio, reconexão
---  Fix: avoid persisting/duplicating system/welcome messages
+--  Fixes/UI: avoid duplicating system messages, unread badge on top,
+--  and click-to-copy messages to clipboard
 -- ============================================================
 
 local Players        = game:GetService("Players")
@@ -65,6 +66,22 @@ local function loadFromLocalFile(filename)
     end
 end
 
+-- Utility: copy to clipboard (works on executors that expose setclipboard)
+local function copyToClipboard(text)
+    if not text then return false end
+    if type(setclipboard) == "function" then
+        local ok = pcall(setclipboard, text)
+        return ok
+    end
+    -- some executors expose different globals, try common ones
+    if _G and type(_G.setclipboard) == "function" then
+        local ok = pcall(_G.setclipboard, text)
+        return ok
+    end
+    -- cannot copy
+    return false
+end
+
 -- ── Estruturas em memória ────────────────────────────────────
 local outgoingQueue = loadFromLocalFile(QUEUE_FILE) or {}      -- { {sender=..., message=..., ts=...}, ... }
 local messageHistory = loadFromLocalFile(HISTORY_FILE) or {}   -- { {id=..., sender=..., message=..., system=..., ts=...}, ... }
@@ -108,7 +125,8 @@ ToggleButton.Font                  = Enum.Font.GothamBold
 ToggleButton.Text                  = "💬"
 ToggleButton.TextSize              = 18
 ToggleButton.TextColor3            = Color3.fromRGB(255, 255, 255)
-ToggleButton.ZIndex                = 10
+-- ensure toggle is below the badge but still high z to avoid overlay issues
+ToggleButton.ZIndex                = 9000
 ToggleButton.Parent                = ChatGui
 Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(0, 8)
 
@@ -210,7 +228,10 @@ UnreadBadge.Text = ""
 UnreadBadge.Visible = false
 UnreadBadge.Parent = ToggleButton
 Instance.new("UICorner", UnreadBadge).CornerRadius = UDim.new(0, 12)
-UnreadBadge.ZIndex = ToggleButton.ZIndex + 1
+-- ensure it stays above everything
+UnreadBadge.ZIndex = 10001
+UnreadBadge.Active = true
+UnreadBadge.Selectable = true
 
 -- ============================================================
 --  CORES
@@ -224,10 +245,12 @@ local COLORS = {
 
 -- ============================================================
 --  EXIBIR MENSAGEM NA UI
+--  Messages are clickable (non-system) to copy to clipboard.
 -- ============================================================
 local function createMessageDisplay(senderName, message, isSystemMessage, opts)
     opts = opts or {}
     local queued = opts.queued
+    local msgText = message or ""
 
     local frame = Instance.new("Frame")
     frame.Size                  = UDim2.new(1, 0, 0, 0)
@@ -239,9 +262,27 @@ local function createMessageDisplay(senderName, message, isSystemMessage, opts)
     pad.PaddingLeft  = UDim.new(0, 4)
     pad.PaddingRight = UDim.new(0, 4)
 
-    local lbl = Instance.new("TextLabel")
+    local lbl
+    if isSystemMessage then
+        lbl = Instance.new("TextLabel")
+        lbl.BackgroundTransparency = 1
+    else
+        -- use a TextButton so it can be clickable
+        lbl = Instance.new("TextButton")
+        lbl.BackgroundTransparency = 1
+        lbl.AutoButtonColor = false
+        -- connect click to copy
+        lbl.MouseButton1Click:Connect(function()
+            local ok = copyToClipboard(msgText)
+            if ok then
+                onMessage("Sistema", "Mensagem copiada para o clipboard.", true)
+            else
+                onMessage("Sistema", "Falha ao copiar: setclipboard não disponível no executor.", true)
+            end
+        end)
+    end
+
     lbl.Size                  = UDim2.new(1, 0, 0, 0)
-    lbl.BackgroundTransparency = 1
     lbl.TextSize              = 13
     lbl.Font                  = Enum.Font.Gotham
     lbl.TextWrapped           = true
@@ -250,11 +291,11 @@ local function createMessageDisplay(senderName, message, isSystemMessage, opts)
     lbl.Parent                = frame
 
     if isSystemMessage then
-        lbl.Text       = "⚙ " .. message
+        lbl.Text       = "⚙ " .. msgText
         lbl.TextColor3 = COLORS.system
     else
         local isSelf = senderName == player.Name
-        lbl.Text       = (isSelf and "▶ [Você] " or "● [" .. senderName .. "] ") .. message .. (queued and " (aguardando envio)" or "")
+        lbl.Text       = (isSelf and "▶ [Você] " or "● [" .. senderName .. "] ") .. msgText .. (queued and " (aguardando envio)" or "")
         lbl.TextColor3 = isSelf and COLORS.self or (queued and COLORS.queued or COLORS.other)
     end
 
