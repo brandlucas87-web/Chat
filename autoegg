@@ -1,0 +1,88 @@
+--// Rayfield UI + Auto Egg Open
+--// Executor Script
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Egg Opener",
+    LoadingTitle = "Egg Opener",
+    LoadingSubtitle = "by ChatGPT",
+    ConfigurationSaving = {
+        Enabled = false
+    },
+    Discord = {
+        Enabled = false
+    },
+    KeySystem = false
+})
+
+local Tab = Window:CreateTab("Main", 4483362458)
+
+--// Config
+local SelectedEgg = "Cracked Egg"
+local TripleEgg = false
+local AutoOpen = false
+
+--// Remote
+local Remote = workspace
+    :WaitForChild("HUH WAIT WHY ROBLOX")
+    :WaitForChild("__REMOTES")
+    :WaitForChild("buyx egg")
+
+--// Dropdown
+Tab:CreateDropdown({
+    Name = "Egg Mode",
+    Options = {"One Egg", "Triple Egg"},
+    CurrentOption = "One Egg",
+    Flag = "EggMode",
+    Callback = function(Option)
+        if Option == "Triple Egg" then
+            TripleEgg = true
+        else
+            TripleEgg = false
+        end
+    end,
+})
+
+--// Textbox
+Tab:CreateInput({
+    Name = "Egg Name",
+    PlaceholderText = "Ex: Bolt Egg",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        if Text and Text ~= "" then
+            SelectedEgg = Text
+        end
+    end,
+})
+
+--// Toggle
+Tab:CreateToggle({
+    Name = "Auto Open Egg",
+    CurrentValue = false,
+    Flag = "AutoEgg",
+    Callback = function(Value)
+        AutoOpen = Value
+    end,
+})
+
+--// Loop
+task.spawn(function()
+    while true do
+        task.wait(0.01)
+
+        if AutoOpen then
+            local args = {
+                {
+                    SelectedEgg,
+                    TripleEgg,
+                    false
+                }
+            }
+
+            pcall(function()
+                Remote:InvokeServer(unpack(args))
+            end)
+        end
+    end
+end)
