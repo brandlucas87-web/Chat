@@ -1,3 +1,5 @@
+# server.py
+
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 
@@ -20,14 +22,14 @@ inventories_lock = threading.Lock()
 
 thumbnail_cache = {}
 
-# =========================================================
+# =========================================
+# CHAT
+# =========================================
 
 def add_message(sender: str, message: str, system: bool = False):
-
     global message_counter
 
     with messages_lock:
-
         message_counter += 1
 
         entry = {
@@ -45,19 +47,20 @@ def add_message(sender: str, message: str, system: bool = False):
 
         return entry
 
-# =========================================================
+# =========================================
+# HOME
+# =========================================
 
 @app.route("/")
 def home():
-
     return jsonify({
         "ok": True,
-        "message": "Roblox Chat Server Online"
+        "message": "Roblox Inventory Server Online"
     })
 
-# =========================================================
-# THUMBNAIL PROXY
-# =========================================================
+# =========================================
+# THUMBNAILS
+# =========================================
 
 @app.route("/thumbnail/<asset_id>")
 def thumbnail(asset_id):
@@ -65,50 +68,33 @@ def thumbnail(asset_id):
     try:
 
         if asset_id in thumbnail_cache:
-
             cached = thumbnail_cache[asset_id]
 
             return Response(
-                cached,
-                mimetype="image/png"
+                cached["content"],
+                mimetype=cached["type"]
             )
 
-        roblox_api = (
-            "https://thumbnails.roblox.com/v1/assets"
-            f"?assetIds={asset_id}"
-            "&returnPolicy=PlaceHolder"
-            "&size=420x420"
-            "&format=Png"
-            "&isCircular=false"
+        url = f"https://www.roblox.com/asset-thumbnail/image?assetId={asset_id}&width=420&height=420&format=png"
+
+        r = requests.get(url, timeout=10)
+
+        content_type = r.headers.get(
+            "Content-Type",
+            "image/png"
         )
 
-        api_response = requests.get(
-            roblox_api,
-            timeout=10
-        )
-
-        data = api_response.json()
-
-        image_url = (
-            data["data"][0]["imageUrl"]
-        )
-
-        image_response = requests.get(
-            image_url,
-            timeout=10
-        )
-
-        image_bytes = image_response.content
-
-        thumbnail_cache[asset_id] = image_bytes
+        thumbnail_cache[asset_id] = {
+            "content": r.content,
+            "type": content_type
+        }
 
         return Response(
-            image_bytes,
-            mimetype="image/png"
+            r.content,
+            mimetype=content_type
         )
 
     except Exception as e:
-
         print("THUMB ERROR:", e)
 
         return jsonify({
@@ -116,9 +102,9 @@ def thumbnail(asset_id):
             "error": str(e)
         }), 500
 
-# =========================================================
+# =========================================
 # INVENTORY
-# =========================================================
+# =========================================
 
 @app.route("/upload_inventory", methods=["POST"])
 def upload_inventory():
@@ -134,7 +120,6 @@ def upload_inventory():
         pets = data.get("pets", [])
 
         if not username:
-
             return jsonify({
                 "ok": False,
                 "error": "Missing username"
@@ -143,7 +128,6 @@ def upload_inventory():
         with inventories_lock:
 
             inventories[username.lower()] = {
-
                 "username": username,
                 "pets": pets,
                 "updated": time.time()
@@ -159,14 +143,12 @@ def upload_inventory():
 
     except Exception as e:
 
-        print(e)
+        print("UPLOAD ERROR:", e)
 
         return jsonify({
             "ok": False,
             "error": str(e)
         }), 500
-
-# =========================================================
 
 @app.route("/user/<username>")
 def get_user(username):
@@ -178,7 +160,6 @@ def get_user(username):
         )
 
     if not inv:
-
         return jsonify({
             "ok": False,
             "error": "User not found"
@@ -189,37 +170,29 @@ def get_user(username):
         "inventory": inv
     })
 
-# =========================================================
-
 @app.route("/users")
 def users():
 
     with inventories_lock:
-
-        user_list = list(
-            inventories.keys()
-        )
+        user_list = list(inventories.keys())
 
     return jsonify({
         "ok": True,
         "users": user_list
     })
 
-# =========================================================
-# CHAT
-# =========================================================
+# =========================================
+# CHAT ROUTES
+# =========================================
 
 @app.route("/send", methods=["POST"])
 def send_message():
 
     try:
 
-        data = request.get_json(
-            silent=True
-        )
+        data = request.get_json(silent=True)
 
         if not data:
-
             return jsonify({
                 "ok": False,
                 "error": "Invalid JSON"
@@ -238,7 +211,6 @@ def send_message():
         )
 
         if not message.strip():
-
             return jsonify({
                 "ok": False,
                 "error": "Empty message"
@@ -252,8 +224,7 @@ def send_message():
 
         print(
             f"[{time.strftime('%H:%M:%S')}] "
-            f"{'[SYSTEM]' if system else sender}: "
-            f"{message}"
+            f"{'[SYSTEM]' if system else sender}: {message}"
         )
 
         return jsonify({
@@ -270,8 +241,6 @@ def send_message():
             "error": "Internal server error"
         }), 500
 
-# =========================================================
-
 @app.route("/messages", methods=["GET"])
 def get_messages():
 
@@ -285,7 +254,6 @@ def get_messages():
     with messages_lock:
 
         new_messages = [
-
             m for m in messages
             if m["id"] > after
         ]
@@ -295,13 +263,10 @@ def get_messages():
         "messages": new_messages
     }), 200
 
-# =========================================================
-
 @app.route("/history", methods=["GET"])
 def history():
 
     with messages_lock:
-
         history_messages = list(messages)
 
     return jsonify({
@@ -309,13 +274,10 @@ def history():
         "messages": history_messages
     }), 200
 
-# =========================================================
-
 @app.route("/status", methods=["GET"])
 def status():
 
     with messages_lock:
-
         total = len(messages)
 
     return jsonify({
@@ -323,17 +285,17 @@ def status():
         "total_messages": total,
         "last_id": message_counter,
         "server_time": time.time()
-    })
+    }), 200
 
-# =========================================================
+# =========================================
+# START
+# =========================================
 
 add_message(
     "System",
     "Server started.",
     system=True
 )
-
-# =========================================================
 
 if __name__ == "__main__":
 
@@ -342,7 +304,7 @@ if __name__ == "__main__":
     )
 
     print("=" * 50)
-    print(" Roblox Chat Server")
+    print(" Roblox Inventory Server")
     print(f" Running on port {PORT}")
     print("=" * 50)
 
