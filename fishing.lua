@@ -235,7 +235,7 @@ MainTab:CreateToggle({
                                     uuid = uuid
                                 })
 
-                                task.wait(0.05)  -- era 0.001, muito agressivo
+                                task.wait(0.001)  -- era 0.001, muito agressivo
                             end
 
                             Rayfield:Notify({
