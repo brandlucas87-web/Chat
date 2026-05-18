@@ -178,71 +178,81 @@ MainTab:CreateToggle({
 				local START = tick()
 
 				while AutoFishing and tick() - START < MaxRuntime do
-					local char = player.Character
-					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local char = player.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-					if hrp then
-						local fishes = getValidFish()
+                    if hrp then
+                        -- Limpa cache de entradas mortas antes de buscar
+                        for uuid, model in pairs(fishCache) do
+                            if not model or not model.Parent then
+                                fishCache[uuid] = nil
+                            end
+                        end
 
-						if #fishes > 0 then
-							local chosenModel = fishes[math.random(1, #fishes)]
-							local uuid = chosenModel.Name
+                        local fishes = getValidFish()
 
-							updateFishInfo(chosenModel)
+                        if #fishes > 0 then
+                            local chosenModel = fishes[math.random(1, #fishes)]
+                            local uuid = chosenModel.Name
 
-							local pos = hrp.Position + Vector3.new(
-								math.random(-15, 15),
-								0,
-								math.random(-15, 15)
-							)
+                            -- Valida se ainda existe antes de tentar
+                            if not chosenModel.Parent then
+                                task.wait(0.2)
+                                continue  -- pula esse ciclo e tenta outro
+                            end
 
-							-- CAST
-							FishingRemote:FireServer({
-								kind = "requestCast",
-								targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
-							})
+                            updateFishInfo(chosenModel)
 
-							task.wait(0.2)
+                            local pos = hrp.Position + Vector3.new(
+                                math.random(-15, 15),
+                                0,
+                                math.random(-15, 15)
+                            )
 
-							-- HOOK
-							FishingRemote:FireServer({
-								kind = "requestHook",
-								uuid = uuid
-							})
+                            FishingRemote:FireServer({
+                                kind = "requestCast",
+                                targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
+                            })
 
-							task.wait(0.2)
+                            task.wait(0.2)
 
-							-- REEL LOOP com timeout de segurança (5 segundos)
-							local reelStart = tick()
-							while AutoFishing and chosenModel and chosenModel.Parent do
-								if tick() - reelStart > 5 then
-									break -- evita travar infinitamente
-								end
+                            FishingRemote:FireServer({
+                                kind = "requestHook",
+                                uuid = uuid
+                            })
 
-								FishingRemote:FireServer({
-									kind = "requestReel",
-									uuid = uuid
-								})
+                            task.wait(0.2)
 
-								task.wait(0.001)
-							end
+                            local reelStart = tick()
+                            while AutoFishing and tick() - reelStart < 5 do
+                                -- Re-checa se o modelo ainda existe no Workspace
+                                if not chosenModel or not chosenModel.Parent then
+                                    break
+                                end
 
-							Rayfield:Notify({
-								Title = "Fish Captured",
-								Content = tostring(uuid),
-								Duration = 2,
-								Image = "check"
-							})
-						else
-							-- Nenhum peixe válido, aguarda antes de tentar novamente
-							task.wait(0.5)
-						end
-					else
-						task.wait(0.5)
-					end
+                                FishingRemote:FireServer({
+                                    kind = "requestReel",
+                                    uuid = uuid
+                                })
 
-					task.wait(0.3)
-				end
+                                task.wait(0.05)  -- era 0.001, muito agressivo
+                            end
+
+                            Rayfield:Notify({
+                                Title = "Fish Captured",
+                                Content = tostring(uuid),
+                                Duration = 2,
+                                Image = "check"
+                            })
+                        else
+                            task.wait(0.5)
+                        end
+                    else
+                        task.wait(0.5)
+                    end
+
+                    task.wait(0.3)
+                end
 
 				AutoFishing = false
 
