@@ -288,3 +288,22 @@ for rarityName in pairs(AllowedRarities) do
 end
 
 Rayfield:LoadConfiguration()
+
+task.spawn(function()
+	while true do
+		for i = 1, 100 do
+			local args = {
+				{
+					stand = "Stand" .. i,
+					kind = "collectMoney"
+				}
+			}
+
+			game:GetService("ReplicatedStorage")
+				:WaitForChild("PlotRemote")
+				:FireServer(unpack(args))
+
+			task.wait(0.05)
+		end
+	end
+end)
