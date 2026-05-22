@@ -37,11 +37,12 @@ local AllowedRarities = {
 	["og"] = true,
 	["godly"] = true,
 	["ancestral"] = true,
-	["toxico"] = true,
+	["toxic"] = true,
 	["infernal"] = true,
 	["noir"] = true,
 	["aqua"] = true,
-	["boss"] = true
+	["boss"] = true,
+	["anime"] = true
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
@@ -50,9 +51,9 @@ local FishParagraph = InfoTab:CreateParagraph({
 })
 
 -- =========================================
--- CACHE de peixes (evita varrer Workspace todo ciclo)
+-- CACHE de peixes
 -- =========================================
-local fishCache = {} -- [uuid] = model
+local fishCache = {}
 
 local function isUUID(str)
 	return string.match(
@@ -71,8 +72,10 @@ end
 local function getRarityOf(model)
 	local frame = model:FindFirstChild("Frame", true)
 	if not frame then return nil end
+
 	local rarityLabel = frame:FindFirstChild("rarity")
 	if not rarityLabel then return nil end
+
 	return string.lower(safeText(rarityLabel))
 end
 
@@ -82,26 +85,26 @@ local function isAllowedRarity(rarityText)
 			return true
 		end
 	end
+
 	return false
 end
 
 local function tryAddToCache(v)
 	if isUUID(v.Name) then
 		local rarityText = getRarityOf(v)
+
 		if rarityText and isAllowedRarity(rarityText) then
 			fishCache[v.Name] = v
 		end
 	end
 end
 
--- Popula cache inicial
+-- Cache inicial
 for _, v in ipairs(Workspace:GetDescendants()) do
 	tryAddToCache(v)
 end
 
--- Atualiza cache automaticamente conforme objetos aparecem/somem
 Workspace.DescendantAdded:Connect(function(v)
-	-- pequeno delay para o frame estar pronto
 	task.delay(0.2, function()
 		tryAddToCache(v)
 	end)
@@ -115,18 +118,19 @@ end)
 
 local function getValidFish()
 	local valid = {}
+
 	for uuid, model in pairs(fishCache) do
 		if model and model.Parent then
-			-- Re-checa raridade caso toggles tenham mudado
 			local rarityText = getRarityOf(model)
+
 			if rarityText and isAllowedRarity(rarityText) then
 				table.insert(valid, model)
 			end
 		else
-			-- Remove entradas inválidas da cache
 			fishCache[uuid] = nil
 		end
 	end
+
 	return valid
 end
 
@@ -143,6 +147,7 @@ local function updateFishInfo(model)
 
 	local weight = "Unknown"
 	local weightFrame = frame:FindFirstChild("Weight")
+
 	if weightFrame then
 		weight = safeText(weightFrame:FindFirstChild("weightText"))
 	end
@@ -178,81 +183,83 @@ MainTab:CreateToggle({
 				local START = tick()
 
 				while AutoFishing and tick() - START < MaxRuntime do
-                    local char = player.Character
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					local char = player.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-                    if hrp then
-                        -- Limpa cache de entradas mortas antes de buscar
-                        for uuid, model in pairs(fishCache) do
-                            if not model or not model.Parent then
-                                fishCache[uuid] = nil
-                            end
-                        end
+					if hrp then
+						for uuid, model in pairs(fishCache) do
+							if not model or not model.Parent then
+								fishCache[uuid] = nil
+							end
+						end
 
-                        local fishes = getValidFish()
+						local fishes = getValidFish()
 
-                        if #fishes > 0 then
-                            local chosenModel = fishes[math.random(1, #fishes)]
-                            local uuid = chosenModel.Name
+						if #fishes > 0 then
+							local chosenModel = fishes[math.random(1, #fishes)]
+							local uuid = chosenModel.Name
 
-                            -- Valida se ainda existe antes de tentar
-                            if not chosenModel.Parent then
-                                task.wait(0.2)
-                                continue  -- pula esse ciclo e tenta outro
-                            end
+							if not chosenModel.Parent then
+								task.wait(0.2)
+								continue
+							end
 
-                            updateFishInfo(chosenModel)
+							updateFishInfo(chosenModel)
 
-                            local pos = hrp.Position + Vector3.new(
-                                math.random(-15, 15),
-                                0,
-                                math.random(-15, 15)
-                            )
+							local pos = hrp.Position + Vector3.new(
+								math.random(-15, 15),
+								0,
+								math.random(-15, 15)
+							)
 
-                            FishingRemote:FireServer({
-                                kind = "requestCast",
-                                targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
-                            })
+							FishingRemote:FireServer({
+								kind = "requestCast",
+								targetPosition = {
+									X = pos.X,
+									Y = pos.Y,
+									Z = pos.Z
+								}
+							})
 
-                            task.wait(0.2)
+							task.wait(0.2)
 
-                            FishingRemote:FireServer({
-                                kind = "requestHook",
-                                uuid = uuid
-                            })
+							FishingRemote:FireServer({
+								kind = "requestHook",
+								uuid = uuid
+							})
 
-                            task.wait(0.2)
+							task.wait(0.2)
 
-                            local reelStart = tick()
-                            while AutoFishing and tick() - reelStart < 5 do
-                                -- Re-checa se o modelo ainda existe no Workspace
-                                if not chosenModel or not chosenModel.Parent then
-                                    break
-                                end
+							local reelStart = tick()
 
-                                FishingRemote:FireServer({
-                                    kind = "requestReel",
-                                    uuid = uuid
-                                })
+							while AutoFishing and tick() - reelStart < 5 do
+								if not chosenModel or not chosenModel.Parent then
+									break
+								end
 
-                                task.wait(0.001)  -- era 0.001, muito agressivo
-                            end
+								FishingRemote:FireServer({
+									kind = "requestReel",
+									uuid = uuid
+								})
 
-                            Rayfield:Notify({
-                                Title = "Fish Captured",
-                                Content = tostring(uuid),
-                                Duration = 2,
-                                Image = "check"
-                            })
-                        else
-                            task.wait(0.5)
-                        end
-                    else
-                        task.wait(0.5)
-                    end
+								task.wait()
+							end
 
-                    task.wait(0.3)
-                end
+							Rayfield:Notify({
+								Title = "Fish Captured",
+								Content = tostring(uuid),
+								Duration = 2,
+								Image = "check"
+							})
+						else
+							task.wait(0.5)
+						end
+					else
+						task.wait(0.5)
+					end
+
+					task.wait(0.3)
+				end
 
 				AutoFishing = false
 
@@ -281,6 +288,7 @@ for rarityName in pairs(AllowedRarities) do
 		Name = rarityName,
 		CurrentValue = true,
 		Flag = "RARITY_" .. rarityName,
+
 		Callback = function(Value)
 			AllowedRarities[rarityName] = Value
 		end,
@@ -299,7 +307,7 @@ task.spawn(function()
 				}
 			}
 
-			game:GetService("ReplicatedStorage")
+			ReplicatedStorage
 				:WaitForChild("PlotRemote")
 				:FireServer(unpack(args))
 
