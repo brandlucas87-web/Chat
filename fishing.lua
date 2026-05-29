@@ -34,15 +34,16 @@ local AutoFishing = false
 local MaxRuntime = 30 * 60
 
 local AllowedRarities = {
-	["og"] = true,
-	["godly"] = true,
-	["ancestral"] = true,
-	["toxic"] = true,
-	["infernal"] = true,
-	["noir"] = true,
-	["aqua"] = true,
-	["boss"] = true,
-	["anime"] = true
+    ["og"] = true,
+    ["godly"] = true,
+    ["ancestral"] = true,
+    ["toxic"] = true,
+    ["infernal"] = true,
+    ["noir"] = true,
+    ["aqua"] = true,
+    ["boss"] = true,
+    ["anime"] = true,
+    ["ruler"] = true
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
@@ -230,9 +231,7 @@ MainTab:CreateToggle({
 
 							task.wait(0.2)
 
-							local reelStart = tick()
-
-							while AutoFishing and tick() - reelStart < 5 do
+							while AutoFishing do
 								if not chosenModel or not chosenModel.Parent then
 									break
 								end
