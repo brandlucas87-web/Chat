@@ -107,11 +107,7 @@ end)
 
 print("[AutoStack] Ativo! Stacking automatico a cada 1s.")
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-
-local player = Players.LocalPlayer
+local player = LocalPlayer
 local FishingRemote = ReplicatedStorage:WaitForChild("FishingRemote")
 
 local BrainrotRarities = require(game.ReplicatedStorage.Datas.BrainrotRarities)
