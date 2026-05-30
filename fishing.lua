@@ -5,6 +5,8 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local FishingRemote = ReplicatedStorage:WaitForChild("FishingRemote")
 
+local BrainrotRarities = require(game.ReplicatedStorage.Datas.BrainrotRarities)
+
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
@@ -26,25 +28,19 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main", "fish")
+local ShopTab = Window:CreateTab("Shop", "shopping-cart")
 local InfoTab = Window:CreateTab("Fish Info", "info")
 
 MainTab:CreateSection("Autofarm")
 
 local AutoFishing = false
+local AutoCollectMoney = false
 local MaxRuntime = 30 * 60
 
-local AllowedRarities = {
-    ["og"] = true,
-    ["godly"] = true,
-    ["ancestral"] = true,
-    ["toxic"] = true,
-    ["infernal"] = true,
-    ["noir"] = true,
-    ["aqua"] = true,
-    ["boss"] = true,
-    ["anime"] = true,
-    ["ruler"] = true
-}
+local AllowedRarities = {}
+for rarityName in pairs(BrainrotRarities) do
+	AllowedRarities[string.lower(rarityName)] = true
+end
 
 local FishParagraph = InfoTab:CreateParagraph({
 	Title = "Current Fish",
@@ -280,6 +276,41 @@ MainTab:CreateToggle({
 	end,
 })
 
+MainTab:CreateToggle({
+	Name = "Auto Collect Money",
+	CurrentValue = false,
+	Flag = "AutoCollectMoneyToggle",
+
+	Callback = function(Value)
+		AutoCollectMoney = Value
+
+		if Value then
+			Rayfield:Notify({
+				Title = "Auto Collect",
+				Content = "Started collecting money",
+				Duration = 3,
+				Image = "coins"
+			})
+		else
+			Rayfield:Notify({
+				Title = "Auto Collect",
+				Content = "Stopped collecting money",
+				Duration = 2,
+				Image = "x"
+			})
+		end
+	end,
+})
+
+ShopTab:CreateButton({
+	Name = "Rod Shop",
+	Callback = function()
+		local player = Players.LocalPlayer
+		player.PlayerGui.main.middle.rodShop.Visible = true
+	end,
+	Icon = "shopping-cart"
+})
+
 MainTab:CreateSection("Allowed Rarities")
 
 for rarityName in pairs(AllowedRarities) do
@@ -298,19 +329,23 @@ Rayfield:LoadConfiguration()
 
 task.spawn(function()
 	while true do
-		for i = 1, 100 do
-			local args = {
-				{
-					stand = "Stand" .. i,
-					kind = "collectMoney"
+		if AutoCollectMoney then
+			for i = 1, 100 do
+				local args = {
+					{
+						stand = "Stand" .. i,
+						kind = "collectMoney"
+					}
 				}
-			}
 
-			ReplicatedStorage
-				:WaitForChild("PlotRemote")
-				:FireServer(unpack(args))
+				ReplicatedStorage
+					:WaitForChild("PlotRemote")
+					:FireServer(unpack(args))
 
-			task.wait(0.05)
+				task.wait(0.05)
+			end
+		else
+			task.wait(0.1)
 		end
 	end
 end)
