@@ -147,6 +147,44 @@ for rarityName in pairs(BrainrotRarities) do
 	AllowedRarities[string.lower(rarityName)] = true
 end
 
+-- Hierarquia de raridades lida dinamicamente de BrainrotRarities (do pior para o melhor)
+local RarityHierarchy = {}
+for rarityName in pairs(BrainrotRarities) do
+	table.insert(RarityHierarchy, string.lower(rarityName))
+end
+
+local function getRarityPriority(rarityName)
+	for priority, rarity in ipairs(RarityHierarchy) do
+		if rarity == string.lower(rarityName) then
+			return priority
+		end
+	end
+	return 0
+end
+
+local function getBestBrainrot()
+	local InventoryClient = _G.BrainrotInventoryClient
+	if not InventoryClient then return nil end
+
+	local inventory = InventoryClient.getInventory()
+	if not inventory or not next(inventory) then return nil end
+
+	local bestUUID = nil
+	local bestPriority = 0
+
+	for uuid, brainrotData in pairs(inventory) do
+		if brainrotData and brainrotData.rarity then
+			local priority = getRarityPriority(brainrotData.rarity)
+			if priority > bestPriority then
+				bestPriority = priority
+				bestUUID = uuid
+			end
+		end
+	end
+
+	return bestUUID
+end
+
 local FishParagraph = InfoTab:CreateParagraph({
 	Title = "Current Fish",
 	Content = "Waiting for fish..."
@@ -307,6 +345,19 @@ MainTab:CreateToggle({
 							end
 
 							updateFishInfo(chosenModel)
+
+							-- Buscar e equipar o melhor brainrot disponível
+							local bestBrainrotUUID = getBestBrainrot()
+							if bestBrainrotUUID then
+								local tool = findBrainrotTool(bestBrainrotUUID)
+								if tool then
+									local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+									if humanoid then
+										humanoid:EquipTool(tool)
+										task.wait(0.2)
+									end
+								end
+							end
 
 							local pos = hrp.Position + Vector3.new(
 								math.random(-15, 15),
