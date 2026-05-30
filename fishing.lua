@@ -1,3 +1,112 @@
+--[[ AutoStack v1.1
+   Automaticamente junta (stack) brainrots iguais do inventario nos stands.
+   Equipa o brainrot na mao antes de mandar o stack.
+   Roda a cada 1 segundo.
+]]
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+local PlotRemote = ReplicatedStorage:WaitForChild("PlotRemote", 30)
+
+local function waitForGlobal(name, timeout)
+	local start = tick()
+	while not _G[name] and tick() - start < (timeout or 30) do
+		task.wait(0.5)
+	end
+	return _G[name]
+end
+
+-- Achar tool do brainrot no backpack pelo UUID
+local function findBrainrotTool(uuid)
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if not backpack then return nil end
+	for _, tool in backpack:GetChildren() do
+		if tool:IsA("Tool") and tool:GetAttribute("brainrotUUID") == uuid then
+			return tool
+		end
+	end
+	return nil
+end
+
+-- Equipar brainrot, mandar stack, desequipar
+local function equipAndStack(standName, uuid)
+	local character = LocalPlayer.Character
+	if not character then return false end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+
+	local tool = findBrainrotTool(uuid)
+	if not tool then return false end
+
+	-- Equipar o brainrot na mao
+	humanoid:EquipTool(tool)
+	task.wait(0.5)
+
+	-- Mandar o stack
+	PlotRemote:FireServer({
+		kind = "stackBrainrot",
+		stand = standName,
+		brainrotUUID = uuid,
+	})
+	task.wait(0.5)
+
+	-- Desequipar
+	humanoid:UnequipTools()
+	task.wait(0.5)
+
+	return true
+end
+
+-- Esperar o jogo carregar
+task.wait(8)
+waitForGlobal("PlotController", 30)
+waitForGlobal("BrainrotInventoryClient", 30)
+
+local isStacking = false
+
+local function autoStack()
+	if isStacking then return end
+
+	local PlotController = _G.PlotController
+	local InventoryClient = _G.BrainrotInventoryClient
+	if not PlotController or not InventoryClient then return end
+
+	local plot = PlotController.getPlot()
+	if not plot then return end
+
+	local inventory = InventoryClient.getInventory()
+	if not inventory then return end
+
+	local brainrotStands = plot.brainrotStands or {}
+
+	-- Para cada brainrot no inventario, ver se tem um stand com o mesmo nome
+	for uuid, brainrotData in pairs(inventory) do
+		if not brainrotData or not brainrotData.name or not brainrotData.uuid then continue end
+
+		-- Achar stand com brainrot de mesmo nome
+		for standName, standData in pairs(brainrotStands) do
+			if standData and standData.name == brainrotData.name then
+				isStacking = true
+				local success = equipAndStack(standName, uuid)
+				isStacking = false
+				return -- Re-ler estado no proximo tick
+			end
+		end
+	end
+end
+
+-- Loop a cada 1 segundo
+task.spawn(function()
+	task.wait(3)
+	while true do
+		autoStack()
+		task.wait(1)
+	end
+end)
+
+print("[AutoStack] Ativo! Stacking automatico a cada 1s.")
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -326,8 +435,6 @@ for rarityName in pairs(AllowedRarities) do
 end
 
 Rayfield:LoadConfiguration()
-
-loadstring(game:HttpGet("https://raw.githubusercontent.com/brandlucas87-web/Chat/refs/heads/main/auto%20optmizer.lua"))()
 
 task.spawn(function()
 	while true do
