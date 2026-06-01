@@ -42,7 +42,8 @@ local AllowedRarities = {
 	["infernal"] = true,
 	["noir"] = true,
 	["aqua"] = true,
-	["boss"] = true
+	["boss"] = true,
+	["ruler"] = true
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
@@ -224,19 +225,39 @@ MainTab:CreateToggle({
 
                             task.wait(0.2)
 
-                            local reelStart = tick()
-                            while AutoFishing and tick() - reelStart < 5 do
-                                -- Re-checa se o modelo ainda existe no Workspace
-                                if not chosenModel or not chosenModel.Parent then
-                                    break
+                            -- Verifica se é ruler para dar reel infinito
+                            local rarityText = getRarityOf(chosenModel)
+                            local isRuler = rarityText and string.find(rarityText, "ruler")
+
+                            if isRuler then
+                                -- Reel infinito até o peixe não existir mais
+                                while AutoFishing do
+                                    if not chosenModel or not chosenModel.Parent then
+                                        break
+                                    end
+
+                                    FishingRemote:FireServer({
+                                        kind = "requestReel",
+                                        uuid = uuid
+                                    })
+
+                                    task.wait(0.05)
                                 end
+                            else
+                                -- Reel normal com limite de tempo (5 segundos)
+                                local reelStart = tick()
+                                while AutoFishing and tick() - reelStart < 5 do
+                                    if not chosenModel or not chosenModel.Parent then
+                                        break
+                                    end
 
-                                FishingRemote:FireServer({
-                                    kind = "requestReel",
-                                    uuid = uuid
-                                })
+                                    FishingRemote:FireServer({
+                                        kind = "requestReel",
+                                        uuid = uuid
+                                    })
 
-                                task.wait(0.05)  -- era 0.001, muito agressivo
+                                    task.wait(0.05)
+                                end
                             end
 
                             Rayfield:Notify({
