@@ -225,39 +225,18 @@ MainTab:CreateToggle({
 
                             task.wait(0.2)
 
-                            -- Verifica se é ruler para dar reel infinito
-                            local rarityText = getRarityOf(chosenModel)
-                            local isRuler = rarityText and string.find(rarityText, "ruler")
-
-                            if isRuler then
-                                -- Reel infinito até o peixe não existir mais
-                                while AutoFishing do
-                                    if not chosenModel or not chosenModel.Parent then
-                                        break
-                                    end
-
-                                    FishingRemote:FireServer({
-                                        kind = "requestReel",
-                                        uuid = uuid
-                                    })
-
-                                    task.wait(0.05)
+                            -- Reel infinito até o peixe não existir mais (para todas as raridades)
+                            while AutoFishing do
+                                if not chosenModel or not chosenModel.Parent then
+                                    break
                                 end
-                            else
-                                -- Reel normal com limite de tempo (5 segundos)
-                                local reelStart = tick()
-                                while AutoFishing and tick() - reelStart < 5 do
-                                    if not chosenModel or not chosenModel.Parent then
-                                        break
-                                    end
 
-                                    FishingRemote:FireServer({
-                                        kind = "requestReel",
-                                        uuid = uuid
-                                    })
+                                FishingRemote:FireServer({
+                                    kind = "requestReel",
+                                    uuid = uuid
+                                })
 
-                                    task.wait(0.05)
-                                end
+                                task.wait(0.05)
                             end
 
                             Rayfield:Notify({
