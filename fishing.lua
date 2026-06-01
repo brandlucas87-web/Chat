@@ -32,6 +32,7 @@ local InfoTab = Window:CreateTab("Fish Info", "info")
 MainTab:CreateSection("Autofarm")
 
 local AutoFishing = false
+local AutoCollectMoney = false
 local MaxRuntime = 30 * 60
 
 local AllowedRarities = {
@@ -275,6 +276,32 @@ MainTab:CreateToggle({
 	end,
 })
 
+MainTab:CreateToggle({
+	Name = "Auto Collect Money",
+	CurrentValue = false,
+	Flag = "AutoCollectMoneyToggle",
+
+	Callback = function(Value)
+		AutoCollectMoney = Value
+
+		if Value then
+			Rayfield:Notify({
+				Title = "Auto Collect",
+				Content = "Started collecting money",
+				Duration = 3,
+				Image = "coins"
+			})
+		else
+			Rayfield:Notify({
+				Title = "Auto Collect",
+				Content = "Stopped collecting money",
+				Duration = 2,
+				Image = "x"
+			})
+		end
+	end,
+})
+
 ShopTab:CreateButton({
 	Name = "Rod Shop",
 	Callback = function()
@@ -298,3 +325,28 @@ for rarityName in pairs(AllowedRarities) do
 end
 
 Rayfield:LoadConfiguration()
+
+-- Auto Collect Money loop
+task.spawn(function()
+	while true do
+		if AutoCollectMoney then
+			for i = 1, 100 do
+				local args = {
+					{
+						stand = "Stand" .. i,
+						kind = "collectMoney"
+					}
+				}
+
+				local PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote")
+				if PlotRemote then
+					PlotRemote:FireServer(unpack(args))
+				end
+
+				task.wait(0.05)
+			end
+		else
+			task.wait(0.1)
+		end
+	end
+end)
