@@ -6,7 +6,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
-local PlotRemote = ReplicatedStorage:WaitForChild("PlotRemote", 30)
+
+-- Não bloquear carregamento do script esperando Remotes/globals imediatamente
+local PlotRemote = nil
+local FishingRemote = nil
 
 local function waitForGlobal(name, timeout)
 	local start = tick()
@@ -43,12 +46,14 @@ local function equipAndStack(standName, uuid)
 	humanoid:EquipTool(tool)
 	task.wait(0.5)
 
-	-- Mandar o stack
-	PlotRemote:FireServer({
-		kind = "stackBrainrot",
-		stand = standName,
-		brainrotUUID = uuid,
-	})
+	-- Mandar o stack (usa PlotRemote se disponível)
+	if PlotRemote then
+		PlotRemote:FireServer({
+			kind = "stackBrainrot",
+			stand = standName,
+			brainrotUUID = uuid,
+		})
+	end
 	task.wait(0.5)
 
 	-- Desequipar
@@ -58,63 +63,41 @@ local function equipAndStack(standName, uuid)
 	return true
 end
 
--- Esperar o jogo carregar
-task.wait(8)
-waitForGlobal("PlotController", 30)
-waitForGlobal("BrainrotInventoryClient", 30)
+-- =========================================
+-- CARREGAR UI IMEDIATAMENTE (não bloquear)
+-- =========================================
+local BrainrotRarities = require(game.ReplicatedStorage.Datas.BrainrotRarities)
 
-local isStacking = false
+local Rayfield
+local Window
 
-local function autoStack()
-	if isStacking then return end
+local ok, rf = pcall(function()
+	return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
 
-	local PlotController = _G.PlotController
-	local InventoryClient = _G.BrainrotInventoryClient
-	if not PlotController or not InventoryClient then return end
-
-	local plot = PlotController.getPlot()
-	if not plot then return end
-
-	local inventory = InventoryClient.getInventory()
-	if not inventory then return end
-
-	local brainrotStands = plot.brainrotStands or {}
-
-	-- Para cada brainrot no inventario, ver se tem um stand com o mesmo nome
-	for uuid, brainrotData in pairs(inventory) do
-		if not brainrotData or not brainrotData.name or not brainrotData.uuid then continue end
-
-		-- Achar stand com brainrot de mesmo nome
-		for standName, standData in pairs(brainrotStands) do
-			if standData and standData.name == brainrotData.name then
-				isStacking = true
-				local success = equipAndStack(standName, uuid)
-				isStacking = false
-				return -- Re-ler estado no proximo tick
-			end
-		end
+if ok and rf then
+	Rayfield = rf
+else
+	local status, res = pcall(function()
+		return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+	end)
+	if status and res then
+		Rayfield = res
+	else
+		warn("[Fishing] Falha ao carregar Rayfield UI:", res)
+		Rayfield = {
+			CreateWindow = function() return {
+				CreateTab = function() return {
+					CreateSection = function() end,
+					CreateToggle = function() end,
+					CreateButton = function() end,
+					CreateParagraph = function() return { Set = function() end } end
+				}
+			end }
 	end
 end
 
--- Loop a cada 1 segundo
-task.spawn(function()
-	task.wait(3)
-	while true do
-		autoStack()
-		task.wait(1)
-	end
-end)
-
-print("[AutoStack] Ativo! Stacking automatico a cada 1s.")
-
-local player = LocalPlayer
-local FishingRemote = ReplicatedStorage:WaitForChild("FishingRemote")
-
-local BrainrotRarities = require(game.ReplicatedStorage.Datas.BrainrotRarities)
-
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
-local Window = Rayfield:CreateWindow({
+Window = Rayfield:CreateWindow({
 	Name = "Fishing Autofarm",
 	Icon = "fish",
 	LoadingTitle = "Fishing Script",
@@ -239,7 +222,7 @@ local function tryAddToCache(v)
 	end
 end
 
--- Cache inicial
+-- Cache inicial (não bloqueante)
 for _, v in ipairs(Workspace:GetDescendants()) do
 	tryAddToCache(v)
 end
@@ -303,6 +286,75 @@ local function updateFishInfo(model)
 	})
 end
 
+-- Função autoStack (usa globals quando estiverem prontos)
+local isStacking = false
+local function autoStack()
+	if isStacking then return end
+
+	local PlotController = _G.PlotController
+	local InventoryClient = _G.BrainrotInventoryClient
+	if not PlotController or not InventoryClient then return end
+
+	local plot = PlotController.getPlot()
+	if not plot then return end
+
+	local inventory = InventoryClient.getInventory()
+	if not inventory then return end
+
+	local brainrotStands = plot.brainrotStands or {}
+
+	-- Para cada brainrot no inventario, ver se tem um stand com o mesmo nome
+	for uuid, brainrotData in pairs(inventory) do
+		if not brainrotData or not brainrotData.name or not brainrotData.uuid then continue end
+
+		-- Achar stand com brainrot de mesmo nome
+		for standName, standData in pairs(brainrotStands) do
+			if standData and standData.name == brainrotData.name then
+				isStacking = true
+				local success = equipAndStack(standName, uuid)
+				isStacking = false
+				return -- Re-ler estado no proximo tick
+			end
+		end
+	end
+end
+
+-- =========================================
+-- INICIALIZAÇÃO EM SEGUNDO PLANO (não bloqueante)
+-- =========================================
+task.spawn(function()
+	-- curta espera para permitir que o jogo carregue minimamente
+	task.wait(1)
+
+	-- buscar remotes/globals com timeouts menores para não bloquear muito
+	PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote") or ReplicatedStorage:WaitForChild("PlotRemote", 5)
+	FishingRemote = ReplicatedStorage:FindFirstChild("FishingRemote") or ReplicatedStorage:WaitForChild("FishingRemote", 5)
+
+	local pc = waitForGlobal("PlotController", 10)
+	local ic = waitForGlobal("BrainrotInventoryClient", 10)
+
+	if not pc or not ic then
+		warn("[Fishing] Alguns globals não estão disponíveis após timeout. Funções dependentes podem não funcionar imediatamente.")
+	end
+
+	-- iniciar loop de autoStack (antes estava lançado no topo e podia bloquear)
+	task.spawn(function()
+		task.wait(3)
+		while true do
+			autoStack()
+			task.wait(1)
+		end
+	end)
+
+	print("[AutoStack] Inicializado em background.")
+end)
+
+print("[AutoStack] Ativo! Stacking automatico (inicialização em background).")
+
+local player = LocalPlayer
+
+-- Se FishingRemote não estiver definido ainda, usaremos a variável definida na inicialização em background
+
 MainTab:CreateToggle({
 	Name = "Auto Fishing",
 	CurrentValue = false,
@@ -365,21 +417,25 @@ MainTab:CreateToggle({
 								math.random(-15, 15)
 							)
 
-							FishingRemote:FireServer({
-								kind = "requestCast",
-								targetPosition = {
-									X = pos.X,
-									Y = pos.Y,
-									Z = pos.Z
-								}
-							})
+							if FishingRemote then
+								FishingRemote:FireServer({
+									kind = "requestCast",
+									targetPosition = {
+										X = pos.X,
+										Y = pos.Y,
+										Z = pos.Z
+									}
+								})
+							end
 
 							task.wait(0.2)
 
-							FishingRemote:FireServer({
-								kind = "requestHook",
-								uuid = uuid
-							})
+							if FishingRemote then
+								FishingRemote:FireServer({
+									kind = "requestHook",
+									uuid = uuid
+								})
+							end
 
 							task.wait(0.2)
 
@@ -388,10 +444,12 @@ MainTab:CreateToggle({
 									break
 								end
 
-								FishingRemote:FireServer({
-									kind = "requestReel",
-									uuid = uuid
-								})
+								if FishingRemote then
+									FishingRemote:FireServer({
+										kind = "requestReel",
+										uuid = uuid
+									})
+								end
 
 								task.wait()
 							end
@@ -483,6 +541,7 @@ end
 
 Rayfield:LoadConfiguration()
 
+-- Auto Collect loop (usa PlotRemote se disponível; não bloqueante)
 task.spawn(function()
 	while true do
 		if AutoCollectMoney then
@@ -494,9 +553,13 @@ task.spawn(function()
 					}
 				}
 
-				ReplicatedStorage
-					:WaitForChild("PlotRemote")
-					:FireServer(unpack(args))
+				local pr = PlotRemote or ReplicatedStorage:FindFirstChild("PlotRemote")
+				if pr then
+					pr:FireServer(unpack(args))
+				else
+					-- se não existe PlotRemote ainda, esperar um pouco
+					task.wait(0.05)
+				end
 
 				task.wait(0.05)
 			end
