@@ -1,103 +1,13 @@
---[[ AutoStack v1.1
-   Automaticamente junta (stack) brainrots iguais do inventario nos stands.
-   Equipa o brainrot na mao antes de mandar o stack.
-   Roda a cada 1 segundo.
-]]
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
--- Não bloquear carregamento do script esperando Remotes/globals imediatamente
-local PlotRemote = nil
-local FishingRemote = nil
+local player = Players.LocalPlayer
+local FishingRemote = ReplicatedStorage:WaitForChild("FishingRemote")
 
-local function waitForGlobal(name, timeout)
-	local start = tick()
-	while not _G[name] and tick() - start < (timeout or 30) do
-		task.wait(0.5)
-	end
-	return _G[name]
-end
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Achar tool do brainrot no backpack pelo UUID
-local function findBrainrotTool(uuid)
-	local backpack = LocalPlayer:FindFirstChild("Backpack")
-	if not backpack then return nil end
-	for _, tool in backpack:GetChildren() do
-		if tool:IsA("Tool") and tool:GetAttribute("brainrotUUID") == uuid then
-			return tool
-		end
-	end
-	return nil
-end
-
--- Equipar brainrot, mandar stack, desequipar
-local function equipAndStack(standName, uuid)
-	local character = LocalPlayer.Character
-	if not character then return false end
-
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then return false end
-
-	local tool = findBrainrotTool(uuid)
-	if not tool then return false end
-
-	-- Equipar o brainrot na mao
-	humanoid:EquipTool(tool)
-	task.wait(0.5)
-
-	-- Mandar o stack (usa PlotRemote se disponível)
-	if PlotRemote then
-		PlotRemote:FireServer({
-			kind = "stackBrainrot",
-			stand = standName,
-			brainrotUUID = uuid,
-		})
-	end
-	task.wait(0.5)
-
-	-- Desequipar
-	humanoid:UnequipTools()
-	task.wait(0.5)
-
-	return true
-end
-
--- =========================================
--- CARREGAR UI IMEDIATAMENTE (não bloquear)
--- =========================================
-local BrainrotRarities = require(game.ReplicatedStorage.Datas.BrainrotRarities)
-
-local Rayfield
-local Window
-
-local ok, rf = pcall(function()
-	return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-end)
-
-if ok and rf then
-	Rayfield = rf
-else
-	local status, res = pcall(function()
-		return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-	end)
-	if status and res then
-		Rayfield = res
-	else
-		warn("[Fishing] Falha ao carregar Rayfield UI:", res)
-		Rayfield = {
-			CreateWindow = function() return {
-				CreateTab = function() return {
-					CreateSection = function() end,
-					CreateToggle = function() end,
-					CreateButton = function() end,
-					CreateParagraph = function() return { Set = function() end } end
-				}
-			end }
-	end
-end
-
-Window = Rayfield:CreateWindow({
+local Window = Rayfield:CreateWindow({
 	Name = "Fishing Autofarm",
 	Icon = "fish",
 	LoadingTitle = "Fishing Script",
@@ -122,51 +32,18 @@ local InfoTab = Window:CreateTab("Fish Info", "info")
 MainTab:CreateSection("Autofarm")
 
 local AutoFishing = false
-local AutoCollectMoney = false
 local MaxRuntime = 30 * 60
 
-local AllowedRarities = {}
-for rarityName in pairs(BrainrotRarities) do
-	AllowedRarities[string.lower(rarityName)] = true
-end
-
--- Hierarquia de raridades lida dinamicamente de BrainrotRarities (do pior para o melhor)
-local RarityHierarchy = {}
-for rarityName in pairs(BrainrotRarities) do
-	table.insert(RarityHierarchy, string.lower(rarityName))
-end
-
-local function getRarityPriority(rarityName)
-	for priority, rarity in ipairs(RarityHierarchy) do
-		if rarity == string.lower(rarityName) then
-			return priority
-		end
-	end
-	return 0
-end
-
-local function getBestBrainrot()
-	local InventoryClient = _G.BrainrotInventoryClient
-	if not InventoryClient then return nil end
-
-	local inventory = InventoryClient.getInventory()
-	if not inventory or not next(inventory) then return nil end
-
-	local bestUUID = nil
-	local bestPriority = 0
-
-	for uuid, brainrotData in pairs(inventory) do
-		if brainrotData and brainrotData.rarity then
-			local priority = getRarityPriority(brainrotData.rarity)
-			if priority > bestPriority then
-				bestPriority = priority
-				bestUUID = uuid
-			end
-		end
-	end
-
-	return bestUUID
-end
+local AllowedRarities = {
+	["og"] = true,
+	["godly"] = true,
+	["ancestral"] = true,
+	["toxico"] = true,
+	["infernal"] = true,
+	["noir"] = true,
+	["aqua"] = true,
+	["boss"] = true
+}
 
 local FishParagraph = InfoTab:CreateParagraph({
 	Title = "Current Fish",
@@ -174,9 +51,9 @@ local FishParagraph = InfoTab:CreateParagraph({
 })
 
 -- =========================================
--- CACHE de peixes
+-- CACHE de peixes (evita varrer Workspace todo ciclo)
 -- =========================================
-local fishCache = {}
+local fishCache = {} -- [uuid] = model
 
 local function isUUID(str)
 	return string.match(
@@ -195,10 +72,8 @@ end
 local function getRarityOf(model)
 	local frame = model:FindFirstChild("Frame", true)
 	if not frame then return nil end
-
 	local rarityLabel = frame:FindFirstChild("rarity")
 	if not rarityLabel then return nil end
-
 	return string.lower(safeText(rarityLabel))
 end
 
@@ -208,26 +83,26 @@ local function isAllowedRarity(rarityText)
 			return true
 		end
 	end
-
 	return false
 end
 
 local function tryAddToCache(v)
 	if isUUID(v.Name) then
 		local rarityText = getRarityOf(v)
-
 		if rarityText and isAllowedRarity(rarityText) then
 			fishCache[v.Name] = v
 		end
 	end
 end
 
--- Cache inicial (não bloqueante)
+-- Popula cache inicial
 for _, v in ipairs(Workspace:GetDescendants()) do
 	tryAddToCache(v)
 end
 
+-- Atualiza cache automaticamente conforme objetos aparecem/somem
 Workspace.DescendantAdded:Connect(function(v)
+	-- pequeno delay para o frame estar pronto
 	task.delay(0.2, function()
 		tryAddToCache(v)
 	end)
@@ -241,19 +116,18 @@ end)
 
 local function getValidFish()
 	local valid = {}
-
 	for uuid, model in pairs(fishCache) do
 		if model and model.Parent then
+			-- Re-checa raridade caso toggles tenham mudado
 			local rarityText = getRarityOf(model)
-
 			if rarityText and isAllowedRarity(rarityText) then
 				table.insert(valid, model)
 			end
 		else
+			-- Remove entradas inválidas da cache
 			fishCache[uuid] = nil
 		end
 	end
-
 	return valid
 end
 
@@ -270,7 +144,6 @@ local function updateFishInfo(model)
 
 	local weight = "Unknown"
 	local weightFrame = frame:FindFirstChild("Weight")
-
 	if weightFrame then
 		weight = safeText(weightFrame:FindFirstChild("weightText"))
 	end
@@ -285,75 +158,6 @@ local function updateFishInfo(model)
 			"\nUUID: " .. model.Name
 	})
 end
-
--- Função autoStack (usa globals quando estiverem prontos)
-local isStacking = false
-local function autoStack()
-	if isStacking then return end
-
-	local PlotController = _G.PlotController
-	local InventoryClient = _G.BrainrotInventoryClient
-	if not PlotController or not InventoryClient then return end
-
-	local plot = PlotController.getPlot()
-	if not plot then return end
-
-	local inventory = InventoryClient.getInventory()
-	if not inventory then return end
-
-	local brainrotStands = plot.brainrotStands or {}
-
-	-- Para cada brainrot no inventario, ver se tem um stand com o mesmo nome
-	for uuid, brainrotData in pairs(inventory) do
-		if not brainrotData or not brainrotData.name or not brainrotData.uuid then continue end
-
-		-- Achar stand com brainrot de mesmo nome
-		for standName, standData in pairs(brainrotStands) do
-			if standData and standData.name == brainrotData.name then
-				isStacking = true
-				local success = equipAndStack(standName, uuid)
-				isStacking = false
-				return -- Re-ler estado no proximo tick
-			end
-		end
-	end
-end
-
--- =========================================
--- INICIALIZAÇÃO EM SEGUNDO PLANO (não bloqueante)
--- =========================================
-task.spawn(function()
-	-- curta espera para permitir que o jogo carregue minimamente
-	task.wait(1)
-
-	-- buscar remotes/globals com timeouts menores para não bloquear muito
-	PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote") or ReplicatedStorage:WaitForChild("PlotRemote", 5)
-	FishingRemote = ReplicatedStorage:FindFirstChild("FishingRemote") or ReplicatedStorage:WaitForChild("FishingRemote", 5)
-
-	local pc = waitForGlobal("PlotController", 10)
-	local ic = waitForGlobal("BrainrotInventoryClient", 10)
-
-	if not pc or not ic then
-		warn("[Fishing] Alguns globals não estão disponíveis após timeout. Funções dependentes podem não funcionar imediatamente.")
-	end
-
-	-- iniciar loop de autoStack (antes estava lançado no topo e podia bloquear)
-	task.spawn(function()
-		task.wait(3)
-		while true do
-			autoStack()
-			task.wait(1)
-		end
-	end)
-
-	print("[AutoStack] Inicializado em background.")
-end)
-
-print("[AutoStack] Ativo! Stacking automatico (inicialização em background).")
-
-local player = LocalPlayer
-
--- Se FishingRemote não estiver definido ainda, usaremos a variável definida na inicialização em background
 
 MainTab:CreateToggle({
 	Name = "Auto Fishing",
@@ -375,100 +179,81 @@ MainTab:CreateToggle({
 				local START = tick()
 
 				while AutoFishing and tick() - START < MaxRuntime do
-					local char = player.Character
-					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local char = player.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-					if hrp then
-						for uuid, model in pairs(fishCache) do
-							if not model or not model.Parent then
-								fishCache[uuid] = nil
-							end
-						end
+                    if hrp then
+                        -- Limpa cache de entradas mortas antes de buscar
+                        for uuid, model in pairs(fishCache) do
+                            if not model or not model.Parent then
+                                fishCache[uuid] = nil
+                            end
+                        end
 
-						local fishes = getValidFish()
+                        local fishes = getValidFish()
 
-						if #fishes > 0 then
-							local chosenModel = fishes[math.random(1, #fishes)]
-							local uuid = chosenModel.Name
+                        if #fishes > 0 then
+                            local chosenModel = fishes[math.random(1, #fishes)]
+                            local uuid = chosenModel.Name
 
-							if not chosenModel.Parent then
-								task.wait(0.2)
-								continue
-							end
+                            -- Valida se ainda existe antes de tentar
+                            if not chosenModel.Parent then
+                                task.wait(0.2)
+                                continue  -- pula esse ciclo e tenta outro
+                            end
 
-							updateFishInfo(chosenModel)
+                            updateFishInfo(chosenModel)
 
-							-- Buscar e equipar o melhor brainrot disponível
-							local bestBrainrotUUID = getBestBrainrot()
-							if bestBrainrotUUID then
-								local tool = findBrainrotTool(bestBrainrotUUID)
-								if tool then
-									local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-									if humanoid then
-										humanoid:EquipTool(tool)
-										task.wait(0.2)
-									end
-								end
-							end
+                            local pos = hrp.Position + Vector3.new(
+                                math.random(-15, 15),
+                                0,
+                                math.random(-15, 15)
+                            )
 
-							local pos = hrp.Position + Vector3.new(
-								math.random(-15, 15),
-								0,
-								math.random(-15, 15)
-							)
+                            FishingRemote:FireServer({
+                                kind = "requestCast",
+                                targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
+                            })
 
-							if FishingRemote then
-								FishingRemote:FireServer({
-									kind = "requestCast",
-									targetPosition = {
-										X = pos.X,
-										Y = pos.Y,
-										Z = pos.Z
-									}
-								})
-							end
+                            task.wait(0.2)
 
-							task.wait(0.2)
+                            FishingRemote:FireServer({
+                                kind = "requestHook",
+                                uuid = uuid
+                            })
 
-							if FishingRemote then
-								FishingRemote:FireServer({
-									kind = "requestHook",
-									uuid = uuid
-								})
-							end
+                            task.wait(0.2)
 
-							task.wait(0.2)
+                            local reelStart = tick()
+                            while AutoFishing and tick() - reelStart < 5 do
+                                -- Re-checa se o modelo ainda existe no Workspace
+                                if not chosenModel or not chosenModel.Parent then
+                                    break
+                                end
 
-							while AutoFishing do
-								if not chosenModel or not chosenModel.Parent then
-									break
-								end
+                                FishingRemote:FireServer({
+                                    kind = "requestReel",
+                                    uuid = uuid
+                                })
 
-								if FishingRemote then
-									FishingRemote:FireServer({
-										kind = "requestReel",
-										uuid = uuid
-									})
-								end
+                                task.wait(0.05)  -- era 0.001, muito agressivo
+                            end
 
-								task.wait()
-							end
+                            Rayfield:Notify({
+                                Title = "Fish Captured",
+                                Content = tostring(uuid),
+                                Duration = 2,
+                                Image = "check"
+                            })
+                        else
+                            task.wait(0.5)
+                        end
+                    else
+                        task.wait(0.5)
+                    end
 
-							Rayfield:Notify({
-								Title = "Fish Captured",
-								Content = tostring(uuid),
-								Duration = 2,
-								Image = "check"
-							})
-						else
-							task.wait(0.5)
-						end
-					else
-						task.wait(0.5)
-					end
-
-					task.wait(0.3)
-				end
+                    task.wait(0.3)
+                end
 
 				AutoFishing = false
 
@@ -483,32 +268,6 @@ MainTab:CreateToggle({
 			Rayfield:Notify({
 				Title = "Auto Fishing",
 				Content = "Stopped autofarm",
-				Duration = 2,
-				Image = "x"
-			})
-		end
-	end,
-})
-
-MainTab:CreateToggle({
-	Name = "Auto Collect Money",
-	CurrentValue = false,
-	Flag = "AutoCollectMoneyToggle",
-
-	Callback = function(Value)
-		AutoCollectMoney = Value
-
-		if Value then
-			Rayfield:Notify({
-				Title = "Auto Collect",
-				Content = "Started collecting money",
-				Duration = 3,
-				Image = "coins"
-			})
-		else
-			Rayfield:Notify({
-				Title = "Auto Collect",
-				Content = "Stopped collecting money",
 				Duration = 2,
 				Image = "x"
 			})
@@ -532,7 +291,6 @@ for rarityName in pairs(AllowedRarities) do
 		Name = rarityName,
 		CurrentValue = true,
 		Flag = "RARITY_" .. rarityName,
-
 		Callback = function(Value)
 			AllowedRarities[rarityName] = Value
 		end,
@@ -540,31 +298,3 @@ for rarityName in pairs(AllowedRarities) do
 end
 
 Rayfield:LoadConfiguration()
-
--- Auto Collect loop (usa PlotRemote se disponível; não bloqueante)
-task.spawn(function()
-	while true do
-		if AutoCollectMoney then
-			for i = 1, 100 do
-				local args = {
-					{
-						stand = "Stand" .. i,
-						kind = "collectMoney"
-					}
-				}
-
-				local pr = PlotRemote or ReplicatedStorage:FindFirstChild("PlotRemote")
-				if pr then
-					pr:FireServer(unpack(args))
-				else
-					-- se não existe PlotRemote ainda, esperar um pouco
-					task.wait(0.05)
-				end
-
-				task.wait(0.05)
-			end
-		else
-			task.wait(0.1)
-		end
-	end
-end)
