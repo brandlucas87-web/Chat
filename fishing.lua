@@ -44,7 +44,8 @@ local AllowedRarities = {
 	["noir"] = true,
 	["aqua"] = true,
 	["boss"] = true,
-	["ruler"] = true
+	["ruler"] = true,
+	["glitched"] = true,
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
