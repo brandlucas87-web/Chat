@@ -36,6 +36,14 @@ local AutoCollectMoney = false
 local MaxRuntime = 30 * 60
 
 local AllowedRarities = {
+	["common"] = true,
+	["uncommon"] = true,
+	["rare"] = true,
+	["epic"] = true,
+	["legendary"] = true,
+	["mythic"] = true,
+	["secret"] = true,
+
 	["og"] = true,
 	["godly"] = true,
 	["ancestral"] = true,
