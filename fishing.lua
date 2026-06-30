@@ -43,7 +43,6 @@ local AllowedRarities = {
 	["legendary"] = true,
 	["mythic"] = true,
 	["secret"] = true,
-
 	["og"] = true,
 	["godly"] = true,
 	["ancestral"] = true,
@@ -56,6 +55,32 @@ local AllowedRarities = {
 	["anime"] = true,
 	["glitched"] = true,
 	["summer"] = true,
+	["exclusive"] = true,
+    ["admin"] = true,
+}
+
+local RarityPriority = {
+	common = 1,
+	uncommon = 2,
+	rare = 3,
+	epic = 4,
+	legendary = 5,
+	mythic = 6,
+	secret = 7,
+	og = 8,
+	godly = 9,
+	ancestral = 10,
+	toxic = 11,
+	infernal = 12,
+	noir = 13,
+	aqua = 14,
+	boss = 15,
+	ruler = 16,
+	anime = 17,
+	glitched = 18,
+	summer = 19,
+	exclusive = 20,
+	admin = 21
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
@@ -108,6 +133,27 @@ local function tryAddToCache(v)
 	end
 end
 
+local function parseIncome(text)
+	text = string.lower(text or "")
+	text = text:gsub(",", "")
+
+	local number = tonumber(text:match("[%d%.]+")) or 0
+
+	if text:find("k") then
+		number *= 1e3
+	elseif text:find("m") then
+		number *= 1e6
+	elseif text:find("b") then
+		number *= 1e9
+	elseif text:find("t") then
+		number *= 1e12
+	elseif text:find("q") then
+		number *= 1e15
+	end
+
+	return number
+end
+
 -- Popula cache inicial
 for _, v in ipairs(Workspace:GetDescendants()) do
 	tryAddToCache(v)
@@ -127,21 +173,51 @@ Workspace.DescendantRemoving:Connect(function(v)
 	end
 end)
 
-local function getValidFish()
-	local valid = {}
+local function getBestFish()
+	local best
+	local bestPriority = -1
+	local bestIncome = -1
+
 	for uuid, model in pairs(fishCache) do
 		if model and model.Parent then
-			-- Re-checa raridade caso toggles tenham mudado
-			local rarityText = getRarityOf(model)
-			if rarityText and isAllowedRarity(rarityText) then
-				table.insert(valid, model)
+
+			local rarity = getRarityOf(model)
+
+			if rarity and isAllowedRarity(rarity) then
+
+				local frame = model:FindFirstChild("Frame", true)
+				local income = 0
+
+				if frame then
+					local incomeLabel = frame:FindFirstChild("income")
+					if incomeLabel then
+						income = parseIncome(incomeLabel.Text)
+					end
+				end
+
+				local priority = 0
+
+				for name, value in pairs(RarityPriority) do
+					if string.find(rarity, name) then
+						priority = value
+						break
+					end
+				end
+
+				if priority > bestPriority or
+					(priority == bestPriority and income > bestIncome) then
+
+					best = model
+					bestPriority = priority
+					bestIncome = income
+				end
 			end
 		else
-			-- Remove entradas inválidas da cache
 			fishCache[uuid] = nil
 		end
 	end
-	return valid
+
+	return best
 end
 
 -- =========================================
@@ -203,10 +279,9 @@ MainTab:CreateToggle({
                             end
                         end
 
-                        local fishes = getValidFish()
+                        local chosenModel = getBestFish()
 
-                        if #fishes > 0 then
-                            local chosenModel = fishes[math.random(1, #fishes)]
+                        if chosenModel then
                             local uuid = chosenModel.Name
 
                             -- Valida se ainda existe antes de tentar
@@ -239,17 +314,24 @@ MainTab:CreateToggle({
 
                             -- Reel infinito até o peixe não existir mais (para todas as raridades)
                             while AutoFishing do
-                                if not chosenModel or not chosenModel.Parent then
-                                    break
-                                end
 
-                                FishingRemote:FireServer({
-                                    kind = "requestReel",
-                                    uuid = uuid
-                                })
-
-                                task.wait(0.05)
-                            end
+								local bestFish = getBestFish()
+							
+								if bestFish and bestFish ~= chosenModel then
+									break
+								end
+							
+								if not chosenModel or not chosenModel.Parent then
+									break
+								end
+							
+								FishingRemote:FireServer({
+									kind = "requestReel",
+									uuid = uuid
+								})
+							
+								task.wait(0.05)
+							end
 
                             Rayfield:Notify({
                                 Title = "Fish Captured",
