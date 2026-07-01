@@ -33,30 +33,30 @@ MainTab:CreateSection("Autofarm")
 
 local AutoFishing = false
 local AutoCollectMoney = false
-local MaxRuntime = 24 * 60 * 60
+local MaxRuntime = 30 * 60
 
 local AllowedRarities = {
-	common = true,
-	uncommon = true,
-	rare = true,
-	epic = true,
-	legendary = true,
-	mythic = true,
-	secret = true,
-	og = true,
-	godly = true,
-	ancestral = true,
-	toxic = true,
-	infernal = true,
-	noir = true,
-	aqua = true,
-	boss = true,
-	ruler = true,
-	anime = true,
-	glitched = true,
-	summer = true,
-	exclusive = true,
-	admin = true,
+	["common"] = true,
+	["uncommon"] = true,
+	["rare"] = true,
+	["epic"] = true,
+	["legendary"] = true,
+	["mythic"] = true,
+	["secret"] = true,
+	["og"] = true,
+	["godly"] = true,
+	["ancestral"] = true,
+	["toxic"] = true,
+	["infernal"] = true,
+	["noir"] = true,
+	["aqua"] = true,
+	["boss"] = true,
+	["ruler"] = true,
+	["anime"] = true,
+	["glitched"] = true,
+	["summer"] = true,
+	["exclusive"] = true,
+    ["admin"] = true,
 }
 
 local RarityPriority = {
@@ -88,11 +88,16 @@ local FishParagraph = InfoTab:CreateParagraph({
 	Content = "Waiting for fish..."
 })
 
-local fishCache = {}
-local FishData = {}
+-- =========================================
+-- CACHE de peixes (evita varrer Workspace todo ciclo)
+-- =========================================
+local fishCache = {} -- [uuid] = model
 
 local function isUUID(str)
-	return string.match(str, "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$")
+	return string.match(
+		str,
+		"^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+	)
 end
 
 local function safeText(obj)
@@ -110,14 +115,6 @@ local function getRarityOf(model)
 	return string.lower(safeText(rarityLabel))
 end
 
-local function getIncomeOf(model)
-	local frame = model:FindFirstChild("Frame", true)
-	if not frame then return 0 end
-	local incomeLabel = frame:FindFirstChild("income")
-	if not incomeLabel then return 0 end
-	return parseIncome(safeText(incomeLabel))
-end
-
 local function isAllowedRarity(rarityText)
 	for rarityName, enabled in pairs(AllowedRarities) do
 		if enabled and string.find(rarityText, string.lower(rarityName)) then
@@ -126,82 +123,6 @@ local function isAllowedRarity(rarityText)
 	end
 	return false
 end
-
-local function loadFishInfo(model)
-	if not model or not model.PrimaryPart then
-		return nil
-	end
-
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-
-	if not hrp then
-		return nil
-	end
-
-	local oldCFrame = hrp.CFrame
-	hrp.CFrame = model.PrimaryPart.CFrame + Vector3.new(0, 5, 0)
-	
-	local startTime = tick()
-	local success = false
-	
-	while tick() - startTime < 1.5 do
-		local frame = model:FindFirstChild("Frame", true)
-		if frame then
-			local rarity = frame:FindFirstChild("rarity")
-			if rarity and rarity.Text ~= "" then
-				success = true
-				break
-			end
-		end
-		task.wait()
-	end
-	
-	hrp.CFrame = oldCFrame
-	
-	if success then
-		local rarity = getRarityOf(model)
-		local income = getIncomeOf(model)
-		
-		if rarity and isAllowedRarity(rarity) then
-			FishData[model.Name] = {
-				rarity = rarity,
-				income = income,
-				scanned = true,
-				lastSeen = tick()
-			}
-			return true
-		end
-	end
-	
-	return false
-end
-
-task.spawn(function()
-	while true do
-		for uuid, data in pairs(FishData) do
-			if not fishCache[uuid] or not fishCache[uuid].Parent then
-				FishData[uuid] = nil
-				fishCache[uuid] = nil
-			end
-		end
-		
-		for uuid, model in pairs(fishCache) do
-			if model and model.Parent then
-				if not FishData[uuid] or not FishData[uuid].scanned then
-					pcall(function()
-						loadFishInfo(model)
-					end)
-					task.wait(0.05)
-				end
-			else
-				fishCache[uuid] = nil
-				FishData[uuid] = nil
-			end
-		end
-		task.wait(0.5)
-	end
-end)
 
 local function tryAddToCache(v)
 	if isUUID(v.Name) then
@@ -233,48 +154,22 @@ local function parseIncome(text)
 	return number
 end
 
-task.spawn(function()
-	while true do
-		local newCache = {}
-		local newFishData = {}
-		
-		for _, v in ipairs(Workspace:GetDescendants()) do
-			if isUUID(v.Name) then
-				local rarityText = getRarityOf(v)
-				if rarityText and isAllowedRarity(rarityText) then
-					newCache[v.Name] = v
-					if FishData[v.Name] then
-						newFishData[v.Name] = FishData[v.Name]
-					end
-				end
-			end
-		end
-		
-		fishCache = newCache
-		
-		for uuid, data in pairs(FishData) do
-			if newCache[uuid] then
-				newFishData[uuid] = data
-			end
-		end
-		FishData = newFishData
-		
-		task.wait(2)
-	end
-end)
+-- Popula cache inicial
+for _, v in ipairs(Workspace:GetDescendants()) do
+	tryAddToCache(v)
+end
 
+-- Atualiza cache automaticamente conforme objetos aparecem/somem
 Workspace.DescendantAdded:Connect(function(v)
-	task.delay(0.1, function()
-		pcall(function()
-			tryAddToCache(v)
-		end)
+	-- pequeno delay para o frame estar pronto
+	task.delay(0.2, function()
+		tryAddToCache(v)
 	end)
 end)
 
 Workspace.DescendantRemoving:Connect(function(v)
 	if isUUID(v.Name) then
 		fishCache[v.Name] = nil
-		FishData[v.Name] = nil
 	end
 end)
 
@@ -282,40 +177,36 @@ local function getBestFish()
 	local best
 	local bestPriority = -1
 	local bestIncome = -1
-	local currentTime = tick()
 
 	for uuid, model in pairs(fishCache) do
 		if model and model.Parent then
-			local rarity
-			local income = 0
-			
-			if FishData[uuid] and FishData[uuid].scanned then
-				rarity = FishData[uuid].rarity
-				income = FishData[uuid].income
-			else
-				rarity = getRarityOf(model)
-				income = getIncomeOf(model)
-				
-				if rarity and isAllowedRarity(rarity) then
-					FishData[uuid] = {
-						rarity = rarity,
-						income = income,
-						scanned = true,
-						lastSeen = currentTime
-					}
-				end
-			end
-			
+
+			local rarity = getRarityOf(model)
+
 			if rarity and isAllowedRarity(rarity) then
-				local priority = RarityPriority[rarity] or 0
-				
-				if FishData[uuid] and FishData[uuid].lastSeen then
-					if currentTime - FishData[uuid].lastSeen < 5 then
-						priority = priority + 0.5
+
+				local frame = model:FindFirstChild("Frame", true)
+				local income = 0
+
+				if frame then
+					local incomeLabel = frame:FindFirstChild("income")
+					if incomeLabel then
+						income = parseIncome(incomeLabel.Text)
 					end
 				end
-				
-				if priority > bestPriority or (priority == bestPriority and income > bestIncome) then
+
+				local priority = 0
+
+				for name, value in pairs(RarityPriority) do
+					if string.find(rarity, name) then
+						priority = value
+						break
+					end
+				end
+
+				if priority > bestPriority or
+					(priority == bestPriority and income > bestIncome) then
+
 					best = model
 					bestPriority = priority
 					bestIncome = income
@@ -323,29 +214,15 @@ local function getBestFish()
 			end
 		else
 			fishCache[uuid] = nil
-			FishData[uuid] = nil
 		end
 	end
 
 	return best
 end
 
-local function safeFire(args)
-	local success = pcall(function()
-		FishingRemote:FireServer(args)
-	end)
-	return success
-end
+-- =========================================
 
 local function updateFishInfo(model)
-	if not model then
-		FishParagraph:Set({
-			Title = "No Fish",
-			Content = "Waiting for fish..."
-		})
-		return
-	end
-	
 	local frame = model:FindFirstChild("Frame", true)
 	if not frame then return end
 
@@ -362,7 +239,12 @@ local function updateFishInfo(model)
 
 	FishParagraph:Set({
 		Title = brainrotName,
-		Content = "Rarity: " .. rarity .. "\nLevel: " .. level .. "\nIncome: " .. income .. "\nWeight: " .. weight .. "\nUUID: " .. model.Name
+		Content =
+			"Rarity: " .. rarity ..
+			"\nLevel: " .. level ..
+			"\nIncome: " .. income ..
+			"\nWeight: " .. weight ..
+			"\nUUID: " .. model.Name
 	})
 end
 
@@ -384,109 +266,88 @@ MainTab:CreateToggle({
 
 			task.spawn(function()
 				local START = tick()
-				local lastFishUUID = nil
-				local fishChangeCooldown = 0
 
 				while AutoFishing and tick() - START < MaxRuntime do
-					local success = pcall(function()
-						local char = player.Character
-						local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local char = player.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-						if not hrp then
-							task.wait(0.5)
-							return
-						end
+                    if hrp then
+                        -- Limpa cache de entradas mortas antes de buscar
+                        for uuid, model in pairs(fishCache) do
+                            if not model or not model.Parent then
+                                fishCache[uuid] = nil
+                            end
+                        end
 
-						for uuid, model in pairs(fishCache) do
-							if not model or not model.Parent then
-								fishCache[uuid] = nil
-								FishData[uuid] = nil
-							end
-						end
+                        local chosenModel = getBestFish()
 
-						local chosenModel = getBestFish()
+                        if chosenModel then
+                            local uuid = chosenModel.Name
 
-						if not chosenModel or not chosenModel.Parent then
-							task.wait(0.3)
-							return
-						end
+                            -- Valida se ainda existe antes de tentar
+                            if not chosenModel.Parent then
+                                task.wait(0.2)
+                                continue  -- pula esse ciclo e tenta outro
+                            end
 
-						local uuid = chosenModel.Name
-						
-						if lastFishUUID == uuid and tick() - fishChangeCooldown < 2 then
-							task.wait(0.1)
-							return
-						end
+                            updateFishInfo(chosenModel)
 
-						updateFishInfo(chosenModel)
-						lastFishUUID = uuid
-						fishChangeCooldown = tick()
+                            local pos = hrp.Position + Vector3.new(
+                                math.random(-15, 15),
+                                0,
+                                math.random(-15, 15)
+                            )
 
-						local pos = hrp.Position + Vector3.new(math.random(-15, 15), 0, math.random(-15, 15))
+                            FishingRemote:FireServer({
+                                kind = "requestCast",
+                                targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
+                            })
 
-						safeFire({
-							kind = "requestCast",
-							targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
-						})
+                            task.wait(0.2)
 
-						task.wait(0.15)
+                            FishingRemote:FireServer({
+                                kind = "requestHook",
+                                uuid = uuid
+                            })
 
-						safeFire({
-							kind = "requestHook",
-							uuid = uuid
-						})
+                            task.wait(0.2)
 
-						task.wait(0.15)
+                            -- Reel infinito até o peixe não existir mais (para todas as raridades)
+                            while AutoFishing do
 
-						local reelStart = tick()
-						local reelAttempts = 0
-
-						while AutoFishing do
-							reelAttempts = reelAttempts + 1
-							
-							if reelAttempts % 3 == 0 then
 								local bestFish = getBestFish()
-								
+							
 								if bestFish and bestFish ~= chosenModel then
-									local bestRarity = getRarityOf(bestFish)
-									local currentRarity = getRarityOf(chosenModel)
-									
-									if bestRarity and currentRarity then
-										local bestPriority = RarityPriority[bestRarity] or 0
-										local currentPriority = RarityPriority[currentRarity] or 0
-										
-										if bestPriority > currentPriority then
-											break
-										elseif bestPriority == currentPriority then
-											local bestIncome = getIncomeOf(bestFish)
-											local currentIncome = getIncomeOf(chosenModel)
-											if bestIncome > currentIncome then
-												break
-											end
-										end
-									end
+									break
 								end
+							
+								if not chosenModel or not chosenModel.Parent then
+									break
+								end
+							
+								FishingRemote:FireServer({
+									kind = "requestReel",
+									uuid = uuid
+								})
+							
+								task.wait(0.05)
 							end
-							
-							if not chosenModel or not chosenModel.Parent then
-								break
-							end
-							
-							if tick() - reelStart > 8 then
-								break
-							end
-							
-							safeFire({
-								kind = "requestReel",
-								uuid = uuid
-							})
-							
-							task.wait(0.03)
-						end
-					end)
 
-					task.wait(0.15)
-				end
+                            Rayfield:Notify({
+                                Title = "Fish Captured",
+                                Content = tostring(uuid),
+                                Duration = 2,
+                                Image = "check"
+                            })
+                        else
+                            task.wait(0.5)
+                        end
+                    else
+                        task.wait(0.5)
+                    end
+
+                    task.wait(0.3)
+                end
 
 				AutoFishing = false
 
@@ -537,6 +398,7 @@ MainTab:CreateToggle({
 ShopTab:CreateButton({
 	Name = "Rod Shop",
 	Callback = function()
+		local player = Players.LocalPlayer
 		player.PlayerGui.main.middle.rodShop.Visible = true
 	end,
 	Icon = "shopping-cart"
@@ -555,49 +417,29 @@ for rarityName in pairs(AllowedRarities) do
 	})
 end
 
+Rayfield:LoadConfiguration()
+
+-- Auto Collect Money loop
 task.spawn(function()
 	while true do
 		if AutoCollectMoney then
-			pcall(function()
-				for i = 1, 100 do
-					local args = { { stand = "Stand" .. i, kind = "collectMoney" } }
-					local PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote")
-					if PlotRemote then
-						PlotRemote:FireServer(unpack(args))
-					end
-					task.wait(0.05)
+			for i = 1, 100 do
+				local args = {
+					{
+						stand = "Stand" .. i,
+						kind = "collectMoney"
+					}
+				}
+
+				local PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote")
+				if PlotRemote then
+					PlotRemote:FireServer(unpack(args))
 				end
-			end)
+
+				task.wait(0.05)
+			end
 		else
 			task.wait(0.1)
 		end
 	end
 end)
-
-task.spawn(function()
-	while true do
-		local fishCount = 0
-		local scannedCount = 0
-		
-		for uuid, model in pairs(fishCache) do
-			if model and model.Parent then
-				fishCount = fishCount + 1
-				if FishData[uuid] and FishData[uuid].scanned then
-					scannedCount = scannedCount + 1
-				end
-			end
-		end
-		
-		local currentContent = FishParagraph.Content
-		if currentContent == "Waiting for fish..." then
-			FishParagraph:Set({
-				Title = "Scanning...",
-				Content = string.format("Fish found: %d\nScanned: %d\nScanning in progress...", fishCount, scannedCount)
-			})
-		end
-		
-		task.wait(5)
-	end
-end)
-
-Rayfield:LoadConfiguration()
