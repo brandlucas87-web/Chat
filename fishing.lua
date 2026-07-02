@@ -33,7 +33,6 @@ MainTab:CreateSection("Autofarm")
 
 local AutoFishing = false
 local AutoCollectMoney = false
-local MaxRuntime = 30 * 60
 
 local AllowedRarities = {
 	["common"] = true,
@@ -185,95 +184,105 @@ MainTab:CreateToggle({
 		if Value then
 			Rayfield:Notify({
 				Title = "Auto Fishing",
-				Content = "Started autofarm",
+				Content = "Started autofarm (infinite AFK mode)",
 				Duration = 3,
 				Image = "fish"
 			})
 
 			task.spawn(function()
-				local START = tick()
+				while AutoFishing do
+					local success = false
+					
+					pcall(function()
+						local char = player.Character
+						local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-				while AutoFishing and tick() - START < MaxRuntime do
-                    local char = player.Character
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							-- Limpa cache de entradas mortas antes de buscar
+							for uuid, model in pairs(fishCache) do
+								if not model or not model.Parent then
+									fishCache[uuid] = nil
+								end
+							end
 
-                    if hrp then
-                        -- Limpa cache de entradas mortas antes de buscar
-                        for uuid, model in pairs(fishCache) do
-                            if not model or not model.Parent then
-                                fishCache[uuid] = nil
-                            end
-                        end
+							local fishes = getValidFish()
 
-                        local fishes = getValidFish()
+							if #fishes > 0 then
+								local chosenModel = fishes[math.random(1, #fishes)]
+								local uuid = chosenModel.Name
 
-                        if #fishes > 0 then
-                            local chosenModel = fishes[math.random(1, #fishes)]
-                            local uuid = chosenModel.Name
+								-- Valida se ainda existe antes de tentar
+								if chosenModel.Parent then
+									updateFishInfo(chosenModel)
 
-                            -- Valida se ainda existe antes de tentar
-                            if not chosenModel.Parent then
-                                task.wait(0.2)
-                                continue  -- pula esse ciclo e tenta outro
-                            end
+									local pos = hrp.Position + Vector3.new(
+										math.random(-15, 15),
+										0,
+										math.random(-15, 15)
+									)
 
-                            updateFishInfo(chosenModel)
+									pcall(function()
+										FishingRemote:FireServer({
+											kind = "requestCast",
+											targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
+										})
+									end)
 
-                            local pos = hrp.Position + Vector3.new(
-                                math.random(-15, 15),
-                                0,
-                                math.random(-15, 15)
-                            )
+									task.wait(0.2)
 
-                            FishingRemote:FireServer({
-                                kind = "requestCast",
-                                targetPosition = { X = pos.X, Y = pos.Y, Z = pos.Z }
-                            })
+									pcall(function()
+										FishingRemote:FireServer({
+											kind = "requestHook",
+											uuid = uuid
+										})
+									end)
 
-                            task.wait(0.2)
+									task.wait(0.2)
 
-                            FishingRemote:FireServer({
-                                kind = "requestHook",
-                                uuid = uuid
-                            })
+									-- Reel infinito até o peixe não existir mais
+									while AutoFishing do
+										if not chosenModel or not chosenModel.Parent then
+											break
+										end
 
-                            task.wait(0.2)
+										pcall(function()
+											FishingRemote:FireServer({
+												kind = "requestReel",
+												uuid = uuid
+											})
+										end)
 
-                            -- Reel infinito até o peixe não existir mais (para todas as raridades)
-                            while AutoFishing do
-                                if not chosenModel or not chosenModel.Parent then
-                                    break
-                                end
+										task.wait(0.05)
+									end
 
-                                FishingRemote:FireServer({
-                                    kind = "requestReel",
-                                    uuid = uuid
-                                })
+									Rayfield:Notify({
+										Title = "Fish Captured",
+										Content = tostring(uuid),
+										Duration = 1,
+										Image = "check"
+									})
+									
+									success = true
+								end
+							else
+								task.wait(0.5)
+							end
+						else
+							task.wait(0.5)
+						end
+					end)
 
-                                task.wait(0.05)
-                            end
-
-                            Rayfield:Notify({
-                                Title = "Fish Captured",
-                                Content = tostring(uuid),
-                                Duration = 2,
-                                Image = "check"
-                            })
-                        else
-                            task.wait(0.5)
-                        end
-                    else
-                        task.wait(0.5)
-                    end
-
-                    task.wait(0.3)
-                end
-
-				AutoFishing = false
+					-- Se houve erro, aguarda um pouco antes de tentar novamente
+					if not success then
+						task.wait(1)
+					end
+					
+					task.wait(0.3)
+				end
 
 				Rayfield:Notify({
 					Title = "Auto Fishing",
-					Content = "Finished",
+					Content = "Stopped autofarm",
 					Duration = 3,
 					Image = "circle-stop"
 				})
@@ -353,7 +362,9 @@ task.spawn(function()
 
 				local PlotRemote = ReplicatedStorage:FindFirstChild("PlotRemote")
 				if PlotRemote then
-					PlotRemote:FireServer(unpack(args))
+					pcall(function()
+						PlotRemote:FireServer(unpack(args))
+					end)
 				end
 
 				task.wait(0.05)
