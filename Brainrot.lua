@@ -8,7 +8,7 @@ local CageRebirthRequirements = require(game.ReplicatedStorage.CageRebirthRequir
 local BrainrotConfig = require(game.ReplicatedStorage.BrainrotConfig)
 local SpawnChanceConfig = require(ReplicatedStorage.SpawnChanceConfig)
 local PickaxeConfig = require(game.ReplicatedStorage:WaitForChild("PickaxeConfig"))
-
+local BrainrotInventoryController = require(game.ReplicatedStorage.Modules:WaitForChild("BrainrotInventoryController"))
 local CageOrder = SpawnChanceConfig.CageOrder
 local RarityChances = SpawnChanceConfig.RarityChances
 
@@ -243,6 +243,9 @@ local autoFarmStatus = "Idle"
 local autoFarmLog = {}
 local loopDelay = 2
 
+-- Forward declarations for functions defined later
+local findPlayerBase
+
 local function addLog(msg)
 	table.insert(autoFarmLog, 1, os.date("%H:%M:%S") .. " - " .. msg)
 	if #autoFarmLog > 50 then table.remove(autoFarmLog) end
@@ -274,21 +277,51 @@ local function disableGuardCreature(model)
 	end
 end
 
+local function isGuardModel(model)
+	if not model or not model:IsA("Model") then return false end
+	local name = string.lower(model.Name)
+	return string.find(name, "guard") or string.find(name, "creature") or string.find(name, "monster")
+		or string.find(name, "chaser") or string.find(name, "enemy") or string.find(name, "hunter")
+		or string.find(name, "beast") or string.find(name, "killer") or string.find(name, "predator")
+end
+
 local function findAndDisableGuards()
-	for _, descendant in workspace:GetDescendants() do
-		if descendant:IsA("Model") then
-			local name = string.lower(descendant.Name)
-			if string.find(name, "guard") or string.find(name, "creature") or string.find(name, "monster")
-				or string.find(name, "chaser") or string.find(name, "enemy") or string.find(name, "hunter")
-				or string.find(name, "beast") or string.find(name, "killer") or string.find(name, "predator") then
-				local humanoid = descendant:FindFirstChildOfClass("Humanoid")
-				if humanoid then
-					disableGuardCreature(descendant)
+	-- Scan ZooArea for guard creatures
+	local zooArea = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("ZooArea")
+	if zooArea then
+		for _, descendant in zooArea:GetDescendants() do
+			if isGuardModel(descendant) then
+				disableGuardCreature(descendant)
+			end
+		end
+	end
+	-- Also scan near the player character for any NPC that might chase/push
+	local char = Player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		for _, model in ipairs(workspace:GetChildren()) do
+			if model:IsA("Model") and model ~= char then
+				local hum = model:FindFirstChildOfClass("Humanoid")
+				local modelHrp = model:FindFirstChild("HumanoidRootPart")
+				if hum and modelHrp and (modelHrp.Position - hrp.Position).Magnitude < 50 then
+					if isGuardModel(model) then
+						disableGuardCreature(model)
+					end
 				end
 			end
 		end
 	end
 end
+
+-- Cached base reference to avoid repeated lookups
+local cachedBase = nil
+local function getCachedBase()
+	if cachedBase and cachedBase.Parent then return cachedBase end
+	cachedBase = findPlayerBase()
+	return cachedBase
+end
+
+local guardDescendantConn = nil
 
 local function startGuardDisable()
 	if guardDisabled then return end
@@ -314,11 +347,20 @@ local function startGuardDisable()
 		end)
 	end
 
-	-- Continuously find and disable guards
+	-- Use DescendantAdded for real-time guard detection (event-driven, no polling)
+	guardDescendantConn = workspace.DescendantAdded:Connect(function(descendant)
+		if isGuardModel(descendant) then
+			disableGuardCreature(descendant)
+		end
+	end)
+
+	-- Initial scan only (event-driven via DescendantAdded handles new guards)
+	findAndDisableGuards()
+	-- Re-scan every 3s (more frequent to catch guards before they can push)
 	guardDisableThread = task.spawn(function()
 		while guardDisabled do
 			findAndDisableGuards()
-			task.wait(0.3)
+			task.wait(3)
 		end
 	end)
 	addLog("Guard disable system started")
@@ -329,6 +371,10 @@ local function stopGuardDisable()
 	if guardDisableThread then
 		task.cancel(guardDisableThread)
 		guardDisableThread = nil
+	end
+	if guardDescendantConn then
+		guardDescendantConn:Disconnect()
+		guardDescendantConn = nil
 	end
 	addLog("Guard disable system stopped")
 end
@@ -362,40 +408,38 @@ local function startMoneyNotifSuppression()
 		end)
 	end
 
-	-- Continuously find and hide floating money text
-	moneyNotifThread = task.spawn(function()
-		while moneyNotifSuppressed do
-			local playerGui = Player:FindFirstChild("PlayerGui")
-			if playerGui then
-				for _, descendant in playerGui:GetDescendants() do
-					if descendant:IsA("BillboardGui") then
-						local name = string.lower(descendant.Name)
-						if string.find(name, "money") or string.find(name, "cash") or string.find(name, "coin") or string.find(name, "floating") or string.find(name, "pop") then
-							pcall(function() descendant.Enabled = false end)
-						end
-					end
-					if descendant:IsA("TextLabel") then
-						local text = descendant.Text or ""
-						if (string.find(text, "%$") or string.find(string.lower(text), "dinheiro") or string.find(text, "%+%d")) then
-							local parent = descendant.Parent
-							if parent and parent:IsA("BillboardGui") then
-								pcall(function() parent.Enabled = false end)
-							end
-						end
-					end
-				end
+	-- Use DescendantAdded for event-driven detection (no polling workspace)
+	local function hideMoneyGui(gui)
+		if not gui then return end
+		if gui:IsA("BillboardGui") then
+			local name = string.lower(gui.Name)
+			if string.find(name, "money") or string.find(name, "cash") or string.find(name, "coin") or string.find(name, "floating") or string.find(name, "pop") then
+				pcall(function() gui.Enabled = false end)
 			end
-			-- Also check workspace for floating money text
-			for _, descendant in workspace:GetDescendants() do
-				if descendant:IsA("BillboardGui") then
-					local name = string.lower(descendant.Name)
-					if string.find(name, "money") or string.find(name, "cash") or string.find(name, "coin") or string.find(name, "floating") or string.find(name, "pop") then
-						pcall(function() descendant.Enabled = false end)
-					end
-				end
-			end
-			task.wait(0.5)
 		end
+	end
+
+	-- Initial hide on player base BillboardGuis only (not entire workspace)
+	local base = getCachedBase()
+	if base then
+		for _, d in base:GetDescendants() do
+			hideMoneyGui(d)
+		end
+	end
+
+	-- Use DescendantAdded on player base for new money popups (event-driven only, no polling)
+	moneyNotifThread = task.spawn(function()
+		local conn
+		if base then
+			conn = base.DescendantAdded:Connect(function(d)
+				hideMoneyGui(d)
+			end)
+		end
+		-- Just sleep until suppression is stopped (no polling needed)
+		while moneyNotifSuppressed do
+			task.wait(10)
+		end
+		if conn then conn:Disconnect() end
 	end)
 	addLog("Money notification suppression started")
 end
@@ -758,7 +802,7 @@ local function swapBrainrot(oldName, newName)
 	if remote then pcall(function() remote:FireServer(oldName, newName) end) end
 end
 
-local function findPlayerBase()
+function findPlayerBase()
 	local baseFolder = workspace:FindFirstChild("Bases")
 		or workspace:FindFirstChild("PlayerBases")
 		or (workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("SafeZone") and workspace.Map.SafeZone:FindFirstChild("PlayerBases"))
@@ -775,7 +819,7 @@ local function findPlayerBase()
 end
 
 local function waitForBaseTeleport()
-	local base = findPlayerBase()
+	local base = getCachedBase()
 	if base then
 		local spawnPart = base:FindFirstChild("SpawnCenter") or base:FindFirstChild("CenterSpawn") or base:FindFirstChildWhichIsA("BasePart")
 		if spawnPart then teleportTo(spawnPart.Position); return true end
@@ -783,24 +827,93 @@ local function waitForBaseTeleport()
 	return false
 end
 
+local function getBasePosition()
+	local base = getCachedBase()
+	if base then
+		local spawnPart = base:FindFirstChild("SpawnCenter") or base:FindFirstChild("CenterSpawn") or base:FindFirstChildWhichIsA("BasePart")
+		if spawnPart then return spawnPart.Position end
+	end
+	return nil
+end
+
+local function hasEquippedBrainrotTool()
+	local char = Player.Character
+	if not char then return false end
+	for _, item in ipairs(char:GetChildren()) do
+		if item:IsA("Tool") then
+			local name = string.lower(item.Name)
+			if string.find(name, "brainrot") or item:GetAttribute("BrainrotName") or item:GetAttribute("IsBrainrot") then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function teleportToBaseWithProtection()
+	local basePos = getBasePosition()
+	if not basePos then return false end
+
+	local _, hrp = getCharacter()
+	if not hrp then return false end
+
+	-- Teleport to base
+	hrp.CFrame = CFrame.new(basePos + Vector3.new(0, 3, 0))
+
+	-- Anchor briefly to prevent guard creature push forces
+	hrp.Anchored = true
+	task.wait(0.15)
+	hrp.Anchored = false
+	hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+
+	return true
+end
+
+local function forceTeleportToBaseWithRetries(maxRetries)
+	maxRetries = maxRetries or 3
+	for i = 1, maxRetries do
+		local success = teleportToBaseWithProtection()
+		if success then
+			task.wait(0.1)
+			-- Verify we're actually at base
+			local char = Player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local basePos = getBasePosition()
+			if hrp and basePos and (hrp.Position - basePos).Magnitude < 20 then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 local function findCollectPad()
-	local base = findPlayerBase()
+	local base = getCachedBase()
 	if not base then return nil end
 	local collectPad = base:FindFirstChild("CollectPad", true)
 	if collectPad and collectPad:IsA("BasePart") then return collectPad end
 	return nil
 end
 
+local cachedPads = nil
 local function findAllCollectPads()
-	local base = findPlayerBase()
+	if cachedPads then
+		-- Verify pads are still valid
+		local valid = true
+		for _, pad in ipairs(cachedPads) do
+			if not pad.Parent then valid = false break end
+		end
+		if valid then return cachedPads end
+	end
+	local base = getCachedBase()
 	if not base then return {} end
-	local pads = {}
+	cachedPads = {}
 	for _, d in ipairs(base:GetDescendants()) do
 		if d.Name == "CollectPad" and d:IsA("BasePart") then
-			table.insert(pads, d)
+			table.insert(cachedPads, d)
 		end
 	end
-	return pads
+	return cachedPads
 end
 
 local autoCollectMoneyEnabled = false
@@ -817,7 +930,7 @@ local function autoCollectMoneyLoop()
 				pcall(function()
 					if firetouchinterest then hasFireTouch = true end
 				end)
-				
+
 				if hasFireTouch then
 					-- Use firetouchinterest to collect from all pads without teleporting
 					for _, pad in ipairs(pads) do
@@ -826,25 +939,25 @@ local function autoCollectMoneyLoop()
 							firetouchinterest(pad, hrp, 1)
 						end)
 					end
-					autoFarmStatus = "Collected money from " .. #pads .. " pads"
 				else
 					-- Fallback: teleport to each pad
 					for _, pad in ipairs(pads) do
 						teleportTo(pad.Position)
 						task.wait(0.05)
 					end
-					autoFarmStatus = "Collected money from " .. #pads .. " pads (teleport)"
 				end
 			else
-				autoFarmStatus = "No CollectPads found on base"
+				cachedPads = nil -- Force refresh on next cycle
 			end
 		end
-		task.wait(0.5)
+		task.wait(1)
 	end
 end
 
 local autoFarmEnabled = false
 local autoFarmThread = nil
+local placeBestThread = nil
+local antiAfkThread = nil
 local SPEEDS = { Normal = 2, Fast = 1, Turbo = 0.5 }
 local speedOrder = { "Normal", "Fast", "Turbo" }
 local currentSpeedIdx = 1
@@ -858,8 +971,6 @@ end
 local function farmCycle()
 	local cageModel, cageName, cageIncome = findCageBrainrot(ALLOWED_RARITIES)
 	if not cageModel then
-		autoFarmStatus = "No compatible brainrots in cage"
-		addLog("No brainrots found in cage with allowed rarities")
 		return false
 	end
 
@@ -872,6 +983,9 @@ local function farmCycle()
 		addLog("Cage not better than base worst")
 		return false
 	end
+
+	-- Invalidate pad cache when we teleport to cage (base may change context)
+	cachedPads = nil
 
 	local cageNameAttr = cageModel:GetAttribute("CageName")
 	if cageNameAttr and not isWallBroken(cageNameAttr) then
@@ -893,6 +1007,9 @@ local function farmCycle()
 	if stealPrompt and platformSpawnTop then
 		-- Unequip pickaxe before collecting brainrot (press '1' to unequip)
 		unequipPickaxe()
+		-- Force disable guards right before steal to prevent push
+		findAndDisableGuards()
+		task.wait(0.1)
 		-- Teleport to the platform with the StealPrompt
 		teleportTo(platformSpawnTop.Position)
 		task.wait(0.2)
@@ -910,8 +1027,10 @@ local function farmCycle()
 		stealPrompt.Enabled = true
 		-- Fire the proximity prompt to initiate the steal
 		fireproximityprompt(stealPrompt, holdDuration)
-		-- Immediately teleport to base, regardless of whether the steal succeeded
-		task.wait(0.1)
+		-- Wait for the steal to register on mobile
+		task.wait(0.3)
+		-- Immediately teleport to base with protection (anchor to prevent guard push)
+		forceTeleportToBaseWithRetries(3)
 	else
 		-- Fallback: use the old method with direct model interaction
 		local cageSpawn = nil
@@ -928,10 +1047,10 @@ local function farmCycle()
 		addLog("Collected brainrot (fallback method): " .. (cageName or "?"))
 	end
 
-	-- Immediately teleport to base after steal attempt (regardless of success)
-	autoFarmStatus = "Teleporting to base..."
-	addLog("Teleporting to base (immediate)")
-	waitForBaseTeleport()
+	-- Immediately teleport to base after steal attempt with protection (anchor prevents guard push)
+	forceTeleportToBaseWithRetries(3)
+	-- Invalidate pad cache after teleporting to base
+	cachedPads = nil
 	task.wait(0.1)
 
 	-- Automatically place best brainrots on base using PlaceBestBrainrots remote
@@ -970,7 +1089,7 @@ local function autoFarmLoop()
 			autoFarmStatus = "Error: " .. tostring(result)
 			addLog("Error: " .. tostring(result))
 		end
-		task.wait(0.3)
+		task.wait(loopDelay)
 	end
 end
 
@@ -1335,6 +1454,27 @@ local autoToggle = AutoFarmTab:CreateToggle({
 
 			autoFarmThread = task.spawn(autoFarmLoop)
 			startGuardDisable()
+			-- Start PlaceBestBrainrots loop (every 1 second)
+			placeBestThread = task.spawn(function()
+				local placeBestRemote = remotesFolder and remotesFolder:FindFirstChild("PlaceBestBrainrots")
+				while autoFarmEnabled do
+					if placeBestRemote and placeBestRemote:IsA("RemoteFunction") then
+						pcall(function() placeBestRemote:InvokeServer() end)
+					end
+					task.wait(1)
+				end
+			end)
+			-- Start Anti-AFK system
+			antiAfkThread = task.spawn(function()
+				local vu = game:GetService("VirtualUser")
+				while autoFarmEnabled do
+					pcall(function()
+						vu:CaptureController()
+						vu:ClickButton2(Vector2.new())
+					end)
+					task.wait(30)
+				end
+			end)
 			Rayfield:Notify({
 				Title = t("TabAutoFarm"),
 				Content = t("NotifAutoStarted"),
@@ -1345,6 +1485,14 @@ local autoToggle = AutoFarmTab:CreateToggle({
 			if autoFarmThread then
 				task.cancel(autoFarmThread)
 				autoFarmThread = nil
+			end
+			if placeBestThread then
+				task.cancel(placeBestThread)
+				placeBestThread = nil
+			end
+			if antiAfkThread then
+				task.cancel(antiAfkThread)
+				antiAfkThread = nil
 			end
 			stopGuardDisable()
 			stopMoneyNotifSuppression()
@@ -1536,6 +1684,94 @@ Player.CharacterAdded:Connect(function()
 	task.wait(1)
 	updateAnalyzerInfo()
 	updateCagesList()
+end)
+
+local backpack = Player:WaitForChild("Backpack")
+local brainrotInventory = Player:WaitForChild("BrainrotInventory")
+
+local function getInventoryCapacity()
+	local success, result = pcall(function()
+		return BrainrotInventoryController.getConfigValue("MaxSlots", brainrotInventory)
+	end)
+	return success and result or 20
+end
+
+local function getInventoryCount()
+	local count = 0
+	for _, item in ipairs(brainrotInventory:GetChildren()) do
+		if item:IsA("Tool") or item.Name ~= "EmptySlot" then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function isInventoryFull()
+	return getInventoryCount() >= getInventoryCapacity()
+end
+
+local function getBestBrainrots()
+	local items = {}
+	for _, item in ipairs(brainrotInventory:GetChildren()) do
+		if item:IsA("Tool") and item:FindFirstChild("BrainrotConfig") then
+			table.insert(items, item)
+		end
+	end
+
+	table.sort(items, function(a, b)
+		local rarityA = a:FindFirstChild("BrainrotConfig") and a.BrainrotConfig.Rarity or 1
+		local rarityB = b:FindFirstChild("BrainrotConfig") and b.BrainrotConfig.Rarity or 1
+		return rarityA > rarityB
+	end)
+
+	return items
+end
+
+local function placeBestBrainrots()
+	local bestBrainrots = getBestBrainrots()
+
+	for _, brainrot in ipairs(bestBrainrots) do
+		local success, result = pcall(function()
+			return BrainrotInventoryController.requestPlaceBestSpotlightState(Player)
+		end)
+		if success then
+			wait(0.5)
+		end
+	end
+end
+
+local function sellAllInventory()
+	for _, item in ipairs(backpack:GetChildren()) do
+		if item:IsA("Tool") then
+			item:Destroy()
+		end
+	end
+
+	for _, item in ipairs(brainrotInventory:GetChildren()) do
+		if item:IsA("Tool") then
+			item:Destroy()
+		end
+	end
+end
+
+Player.CharacterAdded:Connect(function()
+	wait(1)
+
+	if isInventoryFull() then
+		placeBestBrainrots()
+		wait(2)
+		sellAllInventory()
+	end
+end)
+
+brainrotInventory:GetChildrenAdded():Connect(function()
+	wait(1)
+
+	if isInventoryFull() then
+		placeBestBrainrots()
+		wait(2)
+		sellAllInventory()
+	end
 end)
 
 Rayfield:LoadConfiguration()
