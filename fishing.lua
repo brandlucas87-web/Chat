@@ -42,7 +42,6 @@ local AllowedRarities = {
 	["legendary"] = true,
 	["mythic"] = true,
 	["secret"] = true,
-
 	["og"] = true,
 	["godly"] = true,
 	["ancestral"] = true,
@@ -58,6 +57,7 @@ local AllowedRarities = {
 	["exclusive"] = true,
 	["admin"] = true,
 	["Hacked"] = true,
+	["Void"] = true
 }
 
 local FishParagraph = InfoTab:CreateParagraph({
