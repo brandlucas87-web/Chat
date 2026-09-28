@@ -1,0 +1,2133 @@
+--[[
+╔══════════════════════════════════════════════════════════════╗
+║                   VALKYRIE X - PREMIUM HUB                   ║
+║        Pet Simulator X • Christmas Edition & Multi-Farm      ║
+╚══════════════════════════════════════════════════════════════╝
+
+Recursos Inclusos:
+[1] Auto Enchant Pets:
+- Escolha o encantamento desejado no dropdown (Royalty, Strength V, etc.)
+- Encanta todos os pets equipados instantaneamente com zero delay até obter o encanto!
+[2] Auto Boosts Inteligente:
+- Ativa Triple Damage, Triple Coins, Super Lucky e Ultra Lucky
+- Compra boosts automaticamente com diamantes quando acabar no inventário!
+[3] Unlock All Hoverboards:
+- Hook idêntico ao script oficial comprovado:
+- Hook em Library.Gamepasses.Owns (ID 18674298)
+- Hook em Library.Message.New para silenciar erros de posse
+- Persistência e salvamento do último equipado (writefile/readfile)
+- Conexão nativa com os botões da GUI oficial do jogo
+- Loop de manutenção contínua anti-overwrite do servidor
+[4] Recompensas: Auto Redeem Rank Rewards e Auto Redeem VIP Rewards automáticos.
+[5] Farm por Área Escolhida: Seleciona área no dropdown, 1 pet por moeda com delay customizável (padrão 0.5s).
+[6] Farm de Candy Canes: Auto rotação suave por todas as áreas com delay de 0.5s por pet sem nenhum teleporte.
+[7] Auto Eggs: Suporte ao AutoHatch com Fast Hatch sem renderizar ovos, pets ou efeitos na tela.
+[8] Evento de Natal: Painel com Moedas Gingerbread, Missão Atual, Recompensas e Porcentagem.
+[9] Jogador / QoL: WalkSpeed customizável, Pulo Infinito e Anti-AFK automático a cada 2s.
+[10] FPS Boost & Anti-Lag (Modo 60 FPS): Remove texturas do mapa, oculta renderização de orbs e lootbags, remove partículas, ondas de choque de quebra de moedas/estágios, moedas voando, otimiza autofarm e restaura tudo ao normal ao desativar.
+[11] Auto Pet Collection: Painel completo com progresso de coleção, tier e metas. Detecta pets faltantes (ignora Exclusivos e Dark Matter), mapeia ovos normais e dourados com suporte a Rainbow Egg, pula automaticamente ovos sem moedas buscando outros pets acessíveis e resgata recompensas de tier.
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local VirtualUser = game:GetService("VirtualUser")
+
+local Player = Players.LocalPlayer
+
+local Library = require(ReplicatedStorage:WaitForChild("Framework"):WaitForChild("Library"))
+while not Library.Loaded do
+	RunService.Heartbeat:Wait()
+end
+
+local CoinsFolder = Library.Things:WaitForChild("Coins")
+local PetsFolder = Library.Things:WaitForChild("Pets")
+local OrbsFolder = Library.Things:WaitForChild("Orbs")
+local LootbagsFolder = Library.Things:WaitForChild("Lootbags")
+
+local Settings = {
+	CandyFarm = {
+		Enabled = false,
+		EmptyTimeout = 5,
+		CurrentWorld = "",
+		CurrentArea = "Nenhuma"
+	},
+	AreaFarm = {
+		Enabled = false,
+		SelectedArea = "Town",
+		PetDelay = 0.5
+	},
+	Enchant = {
+		Enabled = false,
+		Selected = "Royalty"
+	},
+	Boosts = {
+		AutoUse = false,
+		AutoBuy = true,
+		Active = {
+			["Triple Damage"] = true,
+			["Triple Coins"] = true,
+			["Super Lucky"] = true,
+			["Ultra Lucky"] = true
+		}
+	},
+	Eggs = {
+		Enabled = false,
+		Selected = "Gingerbread Egg",
+		Amount = 1,
+		Delay = 0.1,
+		FastHatch = true
+	},
+	Rewards = {
+		Rank = true,
+		VIP = true
+	},
+	Player = {
+		WalkSpeed = 16,
+		SpeedEnabled = false,
+		InfiniteJump = false,
+		UnlockHoverboards = false,
+		AntiAfk = true
+	},
+	Performance = {
+		FPSBoost = false
+	},
+	Collection = {
+		Enabled = false,
+		AutoRedeem = true,
+		Amount = 1,
+		Delay = 0.1,
+		FastHatch = true,
+		CurrentTargetPet = "Nenhum",
+		CurrentTargetEgg = "Nenhum",
+		CurrentTargetVariant = "Normal"
+	}
+}
+
+local Cache = {
+	Candies = {},
+	LastCandyCount = 0,
+	LastCandyTime = 0
+}
+
+local function GetCharacter()
+	local Character = Player.Character or Player.CharacterAdded:Wait()
+	local RootPart = Character:WaitForChild("HumanoidRootPart", 5)
+	local Humanoid = Character:WaitForChild("Humanoid", 5)
+	return Character, RootPart, Humanoid
+end
+
+local PerformanceManager = {}
+do
+	local ActiveConnections = {}
+	local OriginalProperties = {}
+	local OriginalLighting = {}
+	local OriginalTerrain = {}
+	local OriginalParticleTemplates = {}
+	local OriginalCoinSelection = Library.WorldFX and Library.WorldFX.CoinSelection
+	local OriginalModelFlash = Library.WorldFX and Library.WorldFX.ModelFlash
+	local OriginalAddCurrency = Library.WorldFX and Library.WorldFX.AddCurrency
+	local OriginalQuestGlow = Library.WorldFX and Library.WorldFX.QuestGlow
+	local OriginalGUIParticlesNew = Library.GUIParticles and Library.GUIParticles.New
+	local Terrain = workspace:FindFirstChildOfClass("Terrain")
+	local DebrisFolder = workspace:FindFirstChild("__DEBRIS")
+	local ParticlesFolder = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Particles")
+	local CoinParticleModel = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Models") and ReplicatedStorage.Assets.Models:FindFirstChild("Coin Particle")
+
+	local function StripInstance(InstanceObj)
+		if not Settings.Performance.FPSBoost then return end
+
+		if InstanceObj:IsA("BasePart") then
+			if not OriginalProperties[InstanceObj] then
+				OriginalProperties[InstanceObj] = {
+					Material = InstanceObj.Material,
+					CastShadow = InstanceObj.CastShadow
+				}
+			end
+			InstanceObj.Material = Enum.Material.SmoothPlastic
+			InstanceObj.CastShadow = false
+		elseif InstanceObj:IsA("Decal") or InstanceObj:IsA("Texture") then
+			if not OriginalProperties[InstanceObj] then
+				OriginalProperties[InstanceObj] = {
+					Transparency = InstanceObj.Transparency
+				}
+			end
+			InstanceObj.Transparency = 1
+		elseif InstanceObj:IsA("ParticleEmitter") or InstanceObj:IsA("Trail") or InstanceObj:IsA("Beam") or InstanceObj:IsA("Fire") or InstanceObj:IsA("Smoke") or InstanceObj:IsA("Sparkles") then
+			if not OriginalProperties[InstanceObj] then
+				OriginalProperties[InstanceObj] = {
+					Enabled = InstanceObj.Enabled
+				}
+			end
+			InstanceObj.Enabled = false
+		elseif InstanceObj:IsA("PostEffect") then
+			if not OriginalProperties[InstanceObj] then
+				OriginalProperties[InstanceObj] = {
+					Enabled = InstanceObj.Enabled
+				}
+			end
+			InstanceObj.Enabled = false
+		end
+	end
+
+	local function SuppressOrb(OrbEntity)
+		if not Settings.Performance.FPSBoost then return end
+
+		if OrbEntity:IsA("BasePart") then
+			OrbEntity.Transparency = 1
+			OrbEntity.CastShadow = false
+		end
+
+		for _, Child in ipairs(OrbEntity:GetDescendants()) do
+			if Child:IsA("BasePart") then
+				Child.Transparency = 1
+				Child.CastShadow = false
+			elseif Child:IsA("ParticleEmitter") or Child:IsA("Trail") or Child:IsA("Beam") then
+				Child.Enabled = false
+			elseif Child:IsA("BillboardGui") or Child:IsA("SurfaceGui") or Child:IsA("PointLight") then
+				Child.Enabled = false
+			end
+		end
+	end
+
+	local function SuppressLootbag(BagEntity)
+		if not Settings.Performance.FPSBoost then return end
+
+		if BagEntity:IsA("BasePart") then
+			BagEntity.Transparency = 1
+			BagEntity.CastShadow = false
+		end
+
+		for _, Child in ipairs(BagEntity:GetDescendants()) do
+			if Child:IsA("BasePart") then
+				Child.Transparency = 1
+				Child.CastShadow = false
+			elseif Child:IsA("ParticleEmitter") or Child:IsA("Trail") or Child:IsA("Beam") then
+				Child.Enabled = false
+			elseif Child:IsA("BillboardGui") or Child:IsA("SurfaceGui") or Child:IsA("PointLight") or Child:IsA("Highlight") then
+				Child.Enabled = false
+			end
+		end
+
+		local BagConn = BagEntity.DescendantAdded:Connect(function(SubItem)
+			task.defer(function()
+				if SubItem:IsA("BasePart") then
+					SubItem.Transparency = 1
+					SubItem.CastShadow = false
+				elseif SubItem:IsA("ParticleEmitter") or SubItem:IsA("Trail") or SubItem:IsA("Beam") or SubItem:IsA("BillboardGui") or SubItem:IsA("SurfaceGui") or SubItem:IsA("PointLight") or SubItem:IsA("Highlight") then
+					SubItem.Enabled = false
+				end
+			end)
+		end)
+		table.insert(ActiveConnections, BagConn)
+	end
+
+	function PerformanceManager.SetFPSBoost(State)
+		for _, Connection in ipairs(ActiveConnections) do
+			pcall(function() Connection:Disconnect() end)
+		end
+		table.clear(ActiveConnections)
+
+		if setfpscap then
+			pcall(setfpscap, 60)
+		end
+
+		if State then
+			if Lighting then
+				OriginalLighting.GlobalShadows = Lighting.GlobalShadows
+				OriginalLighting.FogEnd = Lighting.FogEnd
+				Lighting.GlobalShadows = false
+				Lighting.FogEnd = 9e9
+
+				for _, Effect in ipairs(Lighting:GetChildren()) do
+					if Effect:IsA("PostEffect") then
+						if OriginalLighting[Effect] == nil then
+							OriginalLighting[Effect] = Effect.Enabled
+						end
+						Effect.Enabled = false
+					end
+				end
+
+				local LightingConn = Lighting.ChildAdded:Connect(function(Child)
+					if Child:IsA("PostEffect") then
+						Child.Enabled = false
+					end
+				end)
+				table.insert(ActiveConnections, LightingConn)
+			end
+
+			if Terrain then
+				OriginalTerrain.WaterWaveSize = Terrain.WaterWaveSize
+				OriginalTerrain.WaterWaveSpeed = Terrain.WaterWaveSpeed
+				OriginalTerrain.WaterReflectance = Terrain.WaterReflectance
+				OriginalTerrain.WaterTransparency = Terrain.WaterTransparency
+
+				Terrain.WaterWaveSize = 0
+				Terrain.WaterWaveSpeed = 0
+				Terrain.WaterReflectance = 0
+				Terrain.WaterTransparency = 0
+			end
+
+			for _, Descendant in ipairs(workspace:GetDescendants()) do
+				StripInstance(Descendant)
+			end
+
+			local WorkspaceConn = workspace.DescendantAdded:Connect(function(NewDescendant)
+				task.defer(function()
+					StripInstance(NewDescendant)
+				end)
+			end)
+			table.insert(ActiveConnections, WorkspaceConn)
+
+			if OrbsFolder then
+				for _, Orb in ipairs(OrbsFolder:GetChildren()) do
+					SuppressOrb(Orb)
+				end
+
+				local OrbConn = OrbsFolder.ChildAdded:Connect(function(NewOrb)
+					task.defer(function()
+						SuppressOrb(NewOrb)
+						local SubConn = NewOrb.DescendantAdded:Connect(function(SubItem)
+							task.defer(function()
+								if SubItem:IsA("BasePart") then
+									SubItem.Transparency = 1
+									SubItem.CastShadow = false
+								elseif SubItem:IsA("ParticleEmitter") or SubItem:IsA("Trail") or SubItem:IsA("Beam") or SubItem:IsA("BillboardGui") or SubItem:IsA("PointLight") then
+									SubItem.Enabled = false
+								end
+							end)
+						end)
+						table.insert(ActiveConnections, SubConn)
+					end)
+				end)
+				table.insert(ActiveConnections, OrbConn)
+			end
+
+			if LootbagsFolder then
+				for _, Bag in ipairs(LootbagsFolder:GetChildren()) do
+					SuppressLootbag(Bag)
+				end
+
+				local LootbagConn = LootbagsFolder.ChildAdded:Connect(function(NewBag)
+					task.defer(function()
+						SuppressLootbag(NewBag)
+						local SubConn = NewBag.DescendantAdded:Connect(function(SubItem)
+							task.defer(function()
+								if SubItem:IsA("BasePart") then
+									SubItem.Transparency = 1
+									SubItem.CastShadow = false
+								elseif SubItem:IsA("ParticleEmitter") or SubItem:IsA("Trail") or SubItem:IsA("Beam") or SubItem:IsA("BillboardGui") or SubItem:IsA("PointLight") or SubItem:IsA("Highlight") then
+									SubItem.Enabled = false
+								end
+							end)
+						end)
+						table.insert(ActiveConnections, SubConn)
+					end)
+				end)
+				table.insert(ActiveConnections, LootbagConn)
+			end
+
+			if Library.WorldFX then
+				Library.WorldFX.CoinSelection = function()
+					return function() end
+				end
+				Library.WorldFX.ModelFlash = function() end
+				Library.WorldFX.AddCurrency = function() end
+				Library.WorldFX.QuestGlow = function()
+					return function() end
+				end
+			end
+
+			if Library.GUIParticles then
+				Library.GUIParticles.New = function()
+					return Instance.new("ParticleEmitter")
+				end
+			end
+
+			if ParticlesFolder then
+				for _, Emitter in ipairs(ParticlesFolder:GetDescendants()) do
+					if Emitter:IsA("ParticleEmitter") then
+						if OriginalParticleTemplates[Emitter] == nil then
+							OriginalParticleTemplates[Emitter] = Emitter.Enabled
+						end
+						Emitter.Enabled = false
+					end
+				end
+			end
+
+			if CoinParticleModel and CoinParticleModel:IsA("BasePart") then
+				CoinParticleModel.Transparency = 1
+				CoinParticleModel.CastShadow = false
+			end
+
+			if DebrisFolder then
+				for _, Item in ipairs(DebrisFolder:GetChildren()) do
+					if Item.Name == "Coin Particle" or Item.Name == "host" or Item.Name == "Explosion FX" then
+						pcall(function() Item:Destroy() end)
+					else
+						StripInstance(Item)
+					end
+				end
+
+				local DebrisConn = DebrisFolder.ChildAdded:Connect(function(Child)
+					task.defer(function()
+						if Child.Name == "Coin Particle" or Child.Name == "host" or Child.Name == "Explosion FX" then
+							pcall(function() Child:Destroy() end)
+						else
+							StripInstance(Child)
+						end
+					end)
+				end)
+				table.insert(ActiveConnections, DebrisConn)
+			end
+		else
+			if Library.WorldFX then
+				if OriginalCoinSelection then Library.WorldFX.CoinSelection = OriginalCoinSelection end
+				if OriginalModelFlash then Library.WorldFX.ModelFlash = OriginalModelFlash end
+				if OriginalAddCurrency then Library.WorldFX.AddCurrency = OriginalAddCurrency end
+				if OriginalQuestGlow then Library.WorldFX.QuestGlow = OriginalQuestGlow end
+			end
+
+			if Library.GUIParticles and OriginalGUIParticlesNew then
+				Library.GUIParticles.New = OriginalGUIParticlesNew
+			end
+
+			for Emitter, WasEnabled in pairs(OriginalParticleTemplates) do
+				if typeof(Emitter) == "Instance" and Emitter.Parent then
+					pcall(function() Emitter.Enabled = WasEnabled end)
+				end
+			end
+			table.clear(OriginalParticleTemplates)
+
+			if CoinParticleModel and CoinParticleModel:IsA("BasePart") then
+				CoinParticleModel.Transparency = 0
+			end
+
+			if Lighting then
+				if OriginalLighting.GlobalShadows ~= nil then
+					Lighting.GlobalShadows = OriginalLighting.GlobalShadows
+				end
+				if OriginalLighting.FogEnd ~= nil then
+					Lighting.FogEnd = OriginalLighting.FogEnd
+				end
+				for Effect, WasEnabled in pairs(OriginalLighting) do
+					if typeof(Effect) == "Instance" and Effect.Parent then
+						pcall(function() Effect.Enabled = WasEnabled end)
+					end
+				end
+				table.clear(OriginalLighting)
+			end
+
+			if Terrain then
+				if OriginalTerrain.WaterWaveSize ~= nil then
+					Terrain.WaterWaveSize = OriginalTerrain.WaterWaveSize
+					Terrain.WaterWaveSpeed = OriginalTerrain.WaterWaveSpeed
+					Terrain.WaterReflectance = OriginalTerrain.WaterReflectance
+					Terrain.WaterTransparency = OriginalTerrain.WaterTransparency
+				end
+				table.clear(OriginalTerrain)
+			end
+
+			for TargetInstance, Props in pairs(OriginalProperties) do
+				if TargetInstance and TargetInstance.Parent then
+					pcall(function()
+						if Props.Material then TargetInstance.Material = Props.Material end
+						if Props.CastShadow ~= nil then TargetInstance.CastShadow = Props.CastShadow end
+						if Props.Transparency ~= nil then TargetInstance.Transparency = Props.Transparency end
+						if Props.Enabled ~= nil then TargetInstance.Enabled = Props.Enabled end
+					end)
+				end
+			end
+			table.clear(OriginalProperties)
+
+			if OrbsFolder then
+				for _, Orb in ipairs(OrbsFolder:GetChildren()) do
+					if Orb:IsA("BasePart") then
+						Orb.Transparency = 0
+						Orb.CastShadow = true
+					end
+					for _, Sub in ipairs(Orb:GetDescendants()) do
+						if Sub:IsA("BasePart") then
+							Sub.Transparency = 0
+							Sub.CastShadow = true
+						elseif Sub:IsA("ParticleEmitter") or Sub:IsA("Trail") or Sub:IsA("Beam") then
+							Sub.Enabled = true
+						elseif Sub:IsA("BillboardGui") or Sub:IsA("SurfaceGui") or Sub:IsA("PointLight") then
+							Sub.Enabled = true
+						end
+					end
+				end
+			end
+
+			if LootbagsFolder then
+				for _, Bag in ipairs(LootbagsFolder:GetChildren()) do
+					if Bag:IsA("BasePart") then
+						Bag.Transparency = 0
+						Bag.CastShadow = true
+					end
+					for _, Sub in ipairs(Bag:GetDescendants()) do
+						if Sub:IsA("BasePart") then
+							Sub.Transparency = 0
+							Sub.CastShadow = true
+						elseif Sub:IsA("ParticleEmitter") or Sub:IsA("Trail") or Sub:IsA("Beam") then
+							Sub.Enabled = true
+						elseif Sub:IsA("BillboardGui") or Sub:IsA("SurfaceGui") or Sub:IsA("PointLight") or Sub:IsA("Highlight") then
+							Sub.Enabled = true
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local HoverboardManager = {}
+do
+	local FILE_NAME = "LastHoverboard.txt"
+	local GAMEPASS_ID = 18674298
+	local Initialized = false
+	local OriginalOwns = Library.Gamepasses.Owns
+	local OriginalMessage = Library.Message.New
+
+	local ValidNames = {}
+	for Name, Data in pairs(Library.Directory.Hoverboards) do
+		if type(Data) == "table" and Data.board then
+			table.insert(ValidNames, Name)
+		end
+	end
+	table.sort(ValidNames)
+
+	local FallbackName = Library.Directory.Hoverboards["Original"] and "Original" or (ValidNames[1] or "Original")
+
+	local function SaveState(Name)
+		if writefile then
+			pcall(writefile, FILE_NAME, Name)
+		end
+	end
+
+	local function LoadState()
+		if readfile then
+			local Success, Result = pcall(readfile, FILE_NAME)
+			if Success and Result then
+				return Result
+			end
+		end
+		return nil
+	end
+
+	function HoverboardManager.Initialize()
+		if Initialized then return end
+		Initialized = true
+
+		Library.Gamepasses.Owns = function(ID, TargetPlayer)
+			if Settings.Player.UnlockHoverboards and tostring(ID) == tostring(GAMEPASS_ID) then
+				return true
+			end
+			return OriginalOwns(ID, TargetPlayer)
+		end
+
+		Library.Message.New = function(MessageText, ...)
+			if Settings.Player.UnlockHoverboards and typeof(MessageText) == "string" then
+				if string.find(string.lower(MessageText), "you don't own this hoverboard") then
+					return
+				end
+			end
+			return OriginalMessage(MessageText, ...)
+		end
+
+		local Container = Library.GUI.Hoverboards
+		local ContentHolder = Container and Container.Container and Container.Container.Holder
+
+		if ContentHolder then
+			local function AttachListener(Button)
+				if not Button:IsA("GuiButton") then return end
+				Button.Activated:Connect(function()
+					if not Settings.Player.UnlockHoverboards then return end
+					local SelectedName = Button.Name
+					if Library.Directory.Hoverboards[SelectedName] then
+						local SaveData = Library.Save.Get()
+						if SaveData then
+							SaveData.EquippedHoverboard = SelectedName
+							SaveState(SelectedName)
+							Library.Signal.Fire("Stat Changed", "EquippedHoverboard")
+						end
+					end
+				end)
+			end
+
+			for _, Item in ipairs(ContentHolder:GetChildren()) do
+				AttachListener(Item)
+			end
+
+			ContentHolder.ChildAdded:Connect(function(NewItem)
+				task.defer(function()
+					AttachListener(NewItem)
+				end)
+			end)
+		end
+
+		task.spawn(function()
+			while true do
+				task.wait(2)
+				if Settings.Player.UnlockHoverboards then
+					local SaveData = Library.Save.Get()
+					if SaveData then
+						SaveData.Hoverboards = ValidNames
+						if SaveData.EquippedHoverboard == "" or not Library.Directory.Hoverboards[SaveData.EquippedHoverboard] then
+							local SavedName = LoadState()
+							SaveData.EquippedHoverboard = (SavedName and Library.Directory.Hoverboards[SavedName]) and SavedName or FallbackName
+							Library.Signal.Fire("Stat Changed", "EquippedHoverboard")
+						else
+							local SavedName = LoadState()
+							if SaveData.EquippedHoverboard ~= SavedName then
+								SaveState(SaveData.EquippedHoverboard)
+							end
+						end
+					end
+				end
+			end
+		end)
+	end
+
+	function HoverboardManager.SetEnabled(State)
+		HoverboardManager.Initialize()
+		local SaveData = Library.Save.Get()
+		if SaveData and State then
+			local SavedName = LoadState()
+			local Target = (SavedName and Library.Directory.Hoverboards[SavedName]) and SavedName or FallbackName
+			SaveData.EquippedHoverboard = Target
+			SaveData.Hoverboards = ValidNames
+			SaveState(Target)
+
+			Library.Signal.Fire("Stat Changed", "Hoverboards")
+			Library.Signal.Fire("Stat Changed", "EquippedHoverboard")
+			Library.Signal.Fire("Stat Changed", "Gamepasses")
+		end
+	end
+end
+
+local CollectionManager = {}
+do
+	local VariantNames = {
+		[1] = "Normal",
+		[2] = "Golden",
+		[3] = "Rainbow"
+	}
+	local TemporaryBlacklist = {}
+
+	function CollectionManager.CanAffordEgg(EggName, WantTriple)
+		if TemporaryBlacklist[EggName] and os.clock() < TemporaryBlacklist[EggName] then
+			return false, false
+		end
+		local EggData = Library.Directory.Eggs[EggName]
+		if not EggData then
+			return true, WantTriple
+		end
+		local SaveData = Library.Save.Get()
+		if not SaveData then
+			return true, WantTriple
+		end
+		local CurrencyKey = EggData.currency or "Coins"
+		local Balance = tonumber(SaveData[CurrencyKey])
+		local SingleCost = tonumber(EggData.cost) or 0
+		if not Balance or SingleCost <= 0 then
+			return true, WantTriple
+		end
+		if Balance < SingleCost then
+			return false, false
+		end
+		if WantTriple and Balance >= (SingleCost * 3) then
+			return true, true
+		end
+		return true, false
+	end
+
+	function CollectionManager.BlacklistEgg(EggName, Duration)
+		TemporaryBlacklist[EggName] = os.clock() + (Duration or 15)
+	end
+
+	function CollectionManager.GetStats()
+		local SaveData = Library.Save.Get()
+		if not (SaveData and SaveData.Collection) then
+			return 0, 0, 0, 0, false
+		end
+		local AllCollectables = Library.Shared.GetAllCollectablePets()
+		local TotalCollectable = 0
+		for _, PetInfo in ipairs(AllCollectables) do
+			local DirectoryData = Library.Directory.Pets[PetInfo.petId]
+			if DirectoryData and DirectoryData.rarity ~= "Exclusive" and not PetInfo.isDarkMatter then
+				TotalCollectable = TotalCollectable + 1
+			end
+		end
+
+		local CollectedCount = #SaveData.Collection
+		local Tier = SaveData.CollectionTier or 0
+		local NextGoal = Library.Shared.PetCollectionTiers[Tier + 1]
+		local CanRedeem = NextGoal and (CollectedCount >= NextGoal) or false
+		return CollectedCount, TotalCollectable, Tier, NextGoal or 0, CanRedeem
+	end
+
+	function CollectionManager.GetNextMissingPet()
+		local SaveData = Library.Save.Get()
+		if not (SaveData and SaveData.Collection) then
+			return nil, "error"
+		end
+
+		local AllCollectables = Library.Shared.GetAllCollectablePets()
+		local CandidateList = {}
+		for _, PetInfo in ipairs(AllCollectables) do
+			local PetId = PetInfo.petId
+			local DirectoryData = Library.Directory.Pets[PetId]
+			if DirectoryData and DirectoryData.rarity ~= "Exclusive" and not PetInfo.isDarkMatter then
+				local VariantNumber = 1
+				if PetInfo.isGolden then
+					VariantNumber = 2
+				elseif PetInfo.isRainbow then
+					VariantNumber = 3
+				end
+
+				local Key = tostring(PetId) .. "-" .. tostring(VariantNumber)
+				local IsUnlocked = Library.Functions.SearchArray(SaveData.Collection, Key)
+				if not IsUnlocked then
+					local BaseEggName = Library.Shared.GetPetEgg(PetId)
+					if BaseEggName then
+						local TargetEgg = BaseEggName
+						if VariantNumber == 2 or VariantNumber == 3 then
+							local GoldenEggName = "Golden " .. BaseEggName
+							if Library.Directory.Eggs[GoldenEggName] and not Library.Directory.Eggs[GoldenEggName].disabled then
+								TargetEgg = GoldenEggName
+							end
+						end
+						table.insert(CandidateList, {
+							PetId = PetId,
+							PetName = DirectoryData.name or tostring(PetId),
+							VariantNumber = VariantNumber,
+							VariantName = VariantNames[VariantNumber] or "Normal",
+							TargetEgg = TargetEgg,
+							BaseEgg = BaseEggName,
+							Key = Key
+						})
+					end
+				end
+			end
+		end
+
+		if #CandidateList == 0 then
+			return nil, "completed"
+		end
+
+		table.sort(CandidateList, function(A, B)
+			if A.BaseEgg ~= B.BaseEgg then
+				return A.BaseEgg < B.BaseEgg
+			end
+			if A.VariantNumber ~= B.VariantNumber then
+				return A.VariantNumber < B.VariantNumber
+			end
+			local IdA = tonumber(A.PetId) or 0
+			local IdB = tonumber(B.PetId) or 0
+			return IdA < IdB
+		end)
+
+		local WantTriple = (Settings.Collection.Amount == 3)
+		for _, Candidate in ipairs(CandidateList) do
+			local CanAfford, UseTriple = CollectionManager.CanAffordEgg(Candidate.TargetEgg, WantTriple)
+			if CanAfford then
+				Candidate.UseTriple = UseTriple
+				return Candidate, "ready"
+			end
+		end
+
+		return CandidateList[1], "unaffordable"
+	end
+
+	function CollectionManager.RedeemReward()
+		pcall(function()
+			Library.Network.Invoke("Redeem Pet Collection")
+		end)
+	end
+end
+
+local CoinScanner = {}
+do
+	CoinsFolder.ChildRemoved:Connect(function(Object)
+		Cache.Candies[Object] = nil
+	end)
+
+	function CoinScanner.IsCandyCane(InstanceObj)
+		if not (InstanceObj and InstanceObj.Parent) then
+			return false
+		end
+
+		local CachedState = Cache.Candies[InstanceObj]
+		if CachedState ~= nil then
+			return CachedState
+		end
+
+		local AttributeName = InstanceObj:GetAttribute("Name") or ""
+		local LowerName = string.lower(AttributeName)
+
+		if string.find(LowerName, "candy cane") or string.find(LowerName, "candycane") or LowerName == "candy canes" then
+			Cache.Candies[InstanceObj] = true
+			return true
+		end
+
+		for _, Child in ipairs(InstanceObj:GetChildren()) do
+			local ChildName = string.lower(Child.Name)
+			if string.find(ChildName, "candycane") or string.find(ChildName, "candy cane") then
+				Cache.Candies[InstanceObj] = true
+				return true
+			end
+		end
+
+		Cache.Candies[InstanceObj] = false
+		return false
+	end
+
+	function CoinScanner.CountCandies()
+		local CurrentTime = os.clock()
+		if CurrentTime - Cache.LastCandyTime < 2 then
+			return Cache.LastCandyCount
+		end
+
+		Cache.LastCandyTime = CurrentTime
+		local Counter = 0
+
+		for _, Coin in ipairs(CoinsFolder:GetChildren()) do
+			if CoinScanner.IsCandyCane(Coin) then
+				Counter = Counter + 1
+			end
+		end
+
+		Cache.LastCandyCount = Counter
+		return Counter
+	end
+
+	function CoinScanner.GetAreaCoins(AreaMetadata, Radius)
+		local Range = Radius or 190
+		local Result = {}
+		local CenterPosition = AreaMetadata.position
+
+		for _, Coin in ipairs(CoinsFolder:GetChildren()) do
+			local PositionPart = Coin:FindFirstChild("POS")
+			local CoinZone = Coin:GetAttribute("Area")
+
+			if CoinZone and string.lower(CoinZone) == string.lower(AreaMetadata.name) then
+				table.insert(Result, Coin)
+			elseif PositionPart and (PositionPart.Position - CenterPosition).Magnitude <= Range then
+				table.insert(Result, Coin)
+			end
+		end
+
+		return Result
+	end
+end
+
+local PetOperations = {}
+do
+	function PetOperations.GetEquippedIds()
+		local IdList = {}
+		for _, Model in ipairs(PetsFolder:GetChildren()) do
+			local OwnerName = Model:GetAttribute("Owner")
+			local PetIdentifier = Model:GetAttribute("ID") or Model.Name
+			if OwnerName == Player.Name and PetIdentifier then
+				table.insert(IdList, PetIdentifier)
+			end
+		end
+
+		if #IdList == 0 then
+			pcall(function()
+				local EquippedPets = Library.PetCmds.GetEquipped(Player)
+				if EquippedPets then
+					for _, PetObj in ipairs(EquippedPets) do
+						table.insert(IdList, PetObj.uid)
+					end
+				end
+			end)
+		end
+
+		return IdList
+	end
+
+	function PetOperations.AssignPets(TargetCoin, PetsToAssign)
+		if not (TargetCoin and TargetCoin.Parent and #PetsToAssign > 0) then
+			return
+		end
+
+		local CoinIdentifier = TargetCoin:GetAttribute("ID") or TargetCoin.Name
+		pcall(function()
+			Library.Network.Invoke("Join Coin", CoinIdentifier, PetsToAssign)
+			for _, PetId in ipairs(PetsToAssign) do
+				Library.Network.Fire("Farm Coin", CoinIdentifier, PetId)
+			end
+			Library.Signal.Fire("Select Coin", TargetCoin)
+		end)
+	end
+
+	function PetOperations.ParsePowers(PowersArray)
+		local Map = {}
+		if PowersArray then
+			for _, Item in ipairs(PowersArray) do
+				local PowerName = Item[1]
+				local PowerTier = tonumber(Item[2]) or 1
+				if PowerName then
+					Map[PowerName] = PowerTier
+				end
+			end
+		end
+		return Map
+	end
+
+	function PetOperations.CheckEnchant(PetRecord, TargetEnchant)
+		if not (PetRecord and PetRecord.powers) then return false end
+		local PowerMap = PetOperations.ParsePowers(PetRecord.powers)
+		local Filter = string.lower(TargetEnchant)
+		local RomanNumerals = { "I", "II", "III", "IV", "V" }
+
+		for Name, Tier in pairs(PowerMap) do
+			local FormattedTitle = Name .. " " .. (RomanNumerals[Tier] or tostring(Tier))
+			if string.lower(FormattedTitle) == Filter or string.lower(Name) == Filter then
+				return true
+			end
+
+			local CleanName = TargetEnchant:gsub("%s+[IVX]+$", ""):gsub("%s+%d+$", "")
+			local ExtractedTier = tonumber(TargetEnchant:match("%s+(%d+)$"))
+			if not ExtractedTier then
+				local RomanPattern = TargetEnchant:match("%s+([IVX]+)$")
+				if RomanPattern then
+					for Index, Value in ipairs(RomanNumerals) do
+						if Value == RomanPattern then
+							ExtractedTier = Index
+							break
+						end
+					end
+				end
+			end
+
+			if CleanName and ExtractedTier then
+				if string.lower(Name) == string.lower(CleanName) and Tier >= ExtractedTier then
+					return true
+				end
+			end
+		end
+
+		return false
+	end
+end
+
+local DirectoryScanner = {}
+do
+	function DirectoryScanner.GetAvailableEggs()
+		local EggRegistry, UniqueTracker = {}, {}
+		local EggsAssetFolder = ReplicatedStorage:FindFirstChild("Game") and ReplicatedStorage.Game:FindFirstChild("Eggs")
+
+		if EggsAssetFolder then
+			for _, Item in ipairs(EggsAssetFolder:GetDescendants()) do
+				if Item:IsA("ModuleScript") and not UniqueTracker[Item.Name] then
+					UniqueTracker[Item.Name] = true
+					table.insert(EggRegistry, Item.Name)
+				end
+			end
+		end
+
+		pcall(function()
+			if Library.Directory and Library.Directory.Eggs then
+				for RegistryName, _ in pairs(Library.Directory.Eggs) do
+					if not UniqueTracker[RegistryName] then
+						UniqueTracker[RegistryName] = true
+						table.insert(EggRegistry, RegistryName)
+					end
+				end
+			end
+		end)
+
+		table.sort(EggRegistry)
+		return #EggRegistry > 0 and EggRegistry or { "Gingerbread Egg", "Golden Gingerbread Egg", "Christmas Tree Egg", "Golden Christmas Tree Egg" }
+	end
+
+	function DirectoryScanner.GetOrderedZones()
+		local SortedAreas = {}
+		local WorkspaceMap = workspace:FindFirstChild("__MAP")
+		local FastTravelFolder = WorkspaceMap and WorkspaceMap:FindFirstChild("Teleports")
+		local PhysicalAreas = WorkspaceMap and WorkspaceMap:FindFirstChild("Areas")
+
+		if FastTravelFolder and #FastTravelFolder:GetChildren() > 0 then
+			local Buffer = {}
+			for _, Marker in ipairs(FastTravelFolder:GetChildren()) do
+				table.insert(Buffer, { name = Marker.Name, position = Marker.Position, sortKey = Marker.Position.X })
+			end
+			table.sort(Buffer, function(A, B) return A.sortKey > B.sortKey end)
+			for _, Entry in ipairs(Buffer) do table.insert(SortedAreas, Entry) end
+		elseif PhysicalAreas and #PhysicalAreas:GetChildren() > 0 then
+			for _, Zone in ipairs(PhysicalAreas:GetChildren()) do
+				local Anchor = Zone:FindFirstChildWhichIsA("BasePart")
+				if Anchor then
+					table.insert(SortedAreas, { name = Zone.Name, position = Anchor.Position, sortKey = Anchor.Position.X })
+				end
+			end
+			table.sort(SortedAreas, function(A, B) return A.sortKey > B.sortKey end)
+		end
+
+		return SortedAreas
+	end
+
+	function DirectoryScanner.GetZoneNames()
+		local ZoneNames = {}
+		for _, Entry in ipairs(DirectoryScanner.GetOrderedZones()) do
+			table.insert(ZoneNames, Entry.name)
+		end
+		return #ZoneNames > 0 and ZoneNames or { "Town", "Forest", "Beach", "Mine", "Winter", "Glacier", "Desert", "Volcano", "Cave" }
+	end
+
+	function DirectoryScanner.GetEnchantList()
+		local Enchants, Visited = {}, {}
+
+		pcall(function()
+			local PowersDirectory = ReplicatedStorage:FindFirstChild("Framework")
+				and ReplicatedStorage.Framework:FindFirstChild("Shared")
+				and ReplicatedStorage.Framework.Shared:FindFirstChild("1 | Directory")
+				and ReplicatedStorage.Framework.Shared["1 | Directory"]:FindFirstChild("Powers")
+
+			if PowersDirectory then
+				for _, ModuleNode in ipairs(PowersDirectory:GetChildren()) do
+					if ModuleNode:IsA("ModuleScript") then
+						local Success, RawData = pcall(require, ModuleNode)
+						if Success and type(RawData) == "table" then
+							for CategoryName, CategoryContent in pairs(RawData) do
+								if type(CategoryContent) == "table" and CategoryContent.canDrop then
+									if CategoryContent.tiers and #CategoryContent.tiers > 0 then
+										for _, TierEntry in ipairs(CategoryContent.tiers) do
+											if TierEntry.title and not Visited[TierEntry.title] then
+												Visited[TierEntry.title] = true
+												table.insert(Enchants, TierEntry.title)
+											end
+										end
+									elseif not Visited[CategoryName] then
+										Visited[CategoryName] = true
+										table.insert(Enchants, CategoryName)
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end)
+
+		pcall(function()
+			if Library.Directory and Library.Directory.Powers then
+				for PowerKey, PowerAttributes in pairs(Library.Directory.Powers) do
+					if type(PowerAttributes) == "table" and PowerAttributes.canDrop then
+						if PowerAttributes.tiers and #PowerAttributes.tiers > 0 then
+							for _, SubTier in ipairs(PowerAttributes.tiers) do
+								if SubTier.title and not Visited[SubTier.title] then
+									Visited[SubTier.title] = true
+									table.insert(Enchants, SubTier.title)
+								end
+							end
+						elseif not Visited[PowerKey] then
+							Visited[PowerKey] = true
+							table.insert(Enchants, PowerKey)
+						end
+					end
+				end
+			end
+		end)
+
+		table.sort(Enchants)
+		return #Enchants > 0 and Enchants or { "Royalty", "Strength V", "Diamonds V", "Coins V", "Glittering", "Teamwork", "Charm", "Magnet" }
+	end
+end
+
+local DynamicEggs = DirectoryScanner.GetAvailableEggs()
+local DynamicAreas = DirectoryScanner.GetZoneNames()
+local DynamicEnchants = DirectoryScanner.GetEnchantList()
+
+local RayfieldSuccess, Rayfield = pcall(function()
+	return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+end)
+
+local Window
+local Tabs = {}
+local Dropdowns = {}
+local Labels = {}
+
+local function UpdateLabel(Element, Content)
+	if Element and Element.Set then
+		pcall(function()
+			local FormattedText = tostring(Content):gsub("[\r\n]+", " "):gsub("%s+", " ")
+			Element:Set(FormattedText)
+		end)
+	end
+end
+
+if Rayfield then
+	Window = Rayfield:CreateWindow({
+		name = "Valkyrie X • Hub",
+		subtitle = "Pet Simulator X • Christmas Edition",
+		sidebarLayout = true,
+		theme = "cobalt"
+	})
+
+	Tabs.Farm = Window:CreateTab({ name = "Auto Candy", icon = 8345317023 })
+	Tabs.AreaFarm = Window:CreateTab({ name = "Farm por Área", icon = 6708234702 })
+	Tabs.Enchant = Window:CreateTab({ name = "Auto Enchant", icon = 7402604431 })
+	Tabs.Boosts = Window:CreateTab({ name = "Auto Boosts", icon = 7599296041 })
+	Tabs.Rewards = Window:CreateTab({ name = "Recompensas", icon = 6501310411 })
+	Tabs.Eggs = Window:CreateTab({ name = "Auto Eggs", icon = 6501310518 })
+	Tabs.Collection = Window:CreateTab({ name = "Pet Collection", icon = 4370031175 })
+	Tabs.Player = Window:CreateTab({ name = "Jogador & Performance", icon = 6949374396 })
+	Tabs.Christmas = Window:CreateTab({ name = "Painel de Natal", icon = 6996395794 })
+
+	Tabs.Farm:CreateSection({ name = "Controle de Candy Canes" })
+
+	Tabs.Farm:CreateToggle({
+		name = "Ativar Farm de Candy Canes",
+		description = "Distribui 1 pet por Candy Cane com delay de 0.5s (sem teleport)",
+		value = false,
+		flag = "AutoFarmCandyCane",
+		callback = function(State)
+			Settings.CandyFarm.Enabled = State
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Auto Candy Farm",
+						content = State and "Farm de Candy Canes ATIVADO!" or "Farm DESATIVADO.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Farm:CreateSlider({
+		name = "Espera sem Candy Canes (s)",
+		description = "Segundos sem Candy Canes na área antes de pular para a próxima",
+		range = { 2, 15 },
+		increment = 1,
+		value = 5,
+		suffix = "s",
+		flag = "AreaTimeout",
+		callback = function(Value)
+			Settings.CandyFarm.EmptyTimeout = Value
+		end
+	})
+
+	Tabs.Farm:CreateSection({ name = "Status em Tempo Real" })
+	Labels.World = Tabs.Farm:CreateText({ name = "Mundo Atual", text = "Carregando..." })
+	Labels.Area = Tabs.Farm:CreateText({ name = "Área Atual", text = "Nenhuma" })
+	Labels.Candies = Tabs.Farm:CreateText({ name = "Candy Canes (Mundo)", text = "0" })
+	Labels.Pets = Tabs.Farm:CreateText({ name = "Pets Equipados", text = "0" })
+
+	Tabs.AreaFarm:CreateSection({ name = "Farm Personalizado por Área" })
+
+	Dropdowns.FarmArea = Tabs.AreaFarm:CreateDropdown({
+		name = "Escolher Área",
+		description = "Selecione em qual área você deseja farmar",
+		options = DynamicAreas,
+		value = DynamicAreas[1] or "Town",
+		flag = "SelectedAreaOption",
+		callback = function(Selected)
+			local Choice = type(Selected) == "table" and Selected[1] or Selected
+			Settings.AreaFarm.SelectedArea = Choice or "Town"
+		end
+	})
+
+	Tabs.AreaFarm:CreateSlider({
+		name = "Delay entre Pets (s)",
+		description = "Intervalo para mandar cada pet atacar (ex: 0.5s)",
+		range = { 0.1, 2 },
+		increment = 0.05,
+		value = 0.5,
+		suffix = "s",
+		flag = "PetSendDelaySlider",
+		callback = function(Value)
+			Settings.AreaFarm.PetDelay = Value
+		end
+	})
+
+	Tabs.AreaFarm:CreateToggle({
+		name = "Ativar Farm na Área Escolhida",
+		description = "Fica na área selecionada mandando 1 pet para cada moeda com o delay configurado",
+		value = false,
+		flag = "AreaFarmToggle",
+		callback = function(State)
+			Settings.AreaFarm.Enabled = State
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Farm por Área",
+						content = State and ("Iniciando farm na área: " .. Settings.AreaFarm.SelectedArea) or "Farm por área desativado.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Enchant:CreateSection({ name = "Encantamento Automático (Pets Equipados)" })
+
+	Dropdowns.Enchant = Tabs.Enchant:CreateDropdown({
+		name = "Escolher Encantamento",
+		description = "Selecione qual poder você deseja para os pets equipados",
+		options = DynamicEnchants,
+		value = "Royalty",
+		flag = "SelectedEnchantOption",
+		callback = function(Selected)
+			local Choice = type(Selected) == "table" and Selected[1] or Selected
+			Settings.Enchant.Selected = Choice or "Royalty"
+		end
+	})
+
+	Tabs.Enchant:CreateToggle({
+		name = "Ativar Auto Enchant (Zero Delay)",
+		description = "Rola o encantamento selecionado em todos os pets que estiverem equipados",
+		value = false,
+		flag = "AutoEnchantToggle",
+		callback = function(State)
+			Settings.Enchant.Enabled = State
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Auto Enchant",
+						content = State and ("Encantando pets equipados com: " .. Settings.Enchant.Selected) or "Auto Enchant pausado.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Enchant:CreateSection({ name = "Status do Encantamento" })
+	Labels.EnchantStatus = Tabs.Enchant:CreateText({ name = "Status Atual", text = "Inativo" })
+
+	Tabs.Boosts:CreateSection({ name = "Gerenciamento de Boosts" })
+
+	Tabs.Boosts:CreateToggle({
+		name = "Ativar Auto Boosts",
+		description = "Usa e consome automaticamente os boosts selecionados sempre que acabarem",
+		value = false,
+		flag = "AutoBoostsToggle",
+		callback = function(State)
+			Settings.Boosts.AutoUse = State
+		end
+	})
+
+	Tabs.Boosts:CreateToggle({
+		name = "Auto Comprar Boosts (se acabar)",
+		description = "Compra automaticamente mais boosts com Diamantes quando você não tiver no inventário",
+		value = true,
+		flag = "AutoBuyBoostsToggle",
+		callback = function(State)
+			Settings.Boosts.AutoBuy = State
+		end
+	})
+
+	Tabs.Boosts:CreateSection({ name = "Boosts Selecionados" })
+
+	Tabs.Boosts:CreateToggle({
+		name = "Triple Damage",
+		value = true,
+		flag = "BoostTripleDamage",
+		callback = function(State)
+			Settings.Boosts.Active["Triple Damage"] = State
+		end
+	})
+
+	Tabs.Boosts:CreateToggle({
+		name = "Triple Coins",
+		value = true,
+		flag = "BoostTripleCoins",
+		callback = function(State)
+			Settings.Boosts.Active["Triple Coins"] = State
+		end
+	})
+
+	Tabs.Boosts:CreateToggle({
+		name = "Super Lucky",
+		value = true,
+		flag = "BoostSuperLucky",
+		callback = function(State)
+			Settings.Boosts.Active["Super Lucky"] = State
+		end
+	})
+
+	Tabs.Boosts:CreateToggle({
+		name = "Ultra Lucky",
+		value = true,
+		flag = "BoostUltraLucky",
+		callback = function(State)
+			Settings.Boosts.Active["Ultra Lucky"] = State
+		end
+	})
+
+	Tabs.Rewards:CreateSection({ name = "Resgate Automático de Baús" })
+
+	Tabs.Rewards:CreateToggle({
+		name = "Auto Redeem Rank Rewards",
+		description = "Resgata o baú de Rank a cada intervalo assim que disponível",
+		value = true,
+		flag = "AutoRankRewardsToggle",
+		callback = function(State)
+			Settings.Rewards.Rank = State
+		end
+	})
+
+	Tabs.Rewards:CreateToggle({
+		name = "Auto Redeem VIP Rewards",
+		description = "Resgata os baús de recompensas VIP assim que disponíveis",
+		value = true,
+		flag = "AutoVIPRewardsToggle",
+		callback = function(State)
+			Settings.Rewards.VIP = State
+		end
+	})
+
+	Tabs.Eggs:CreateSection({ name = "Configuração do Auto Open" })
+
+	Dropdowns.Egg = Tabs.Eggs:CreateDropdown({
+		name = "Selecionar Ovo",
+		description = "Ovos detectados automaticamente (" .. #DynamicEggs .. " ovos)",
+		options = DynamicEggs,
+		value = DynamicEggs[1] or "Gingerbread Egg",
+		flag = "SelectedEggOption",
+		callback = function(Selected)
+			local Choice = type(Selected) == "table" and Selected[1] or Selected
+			Settings.Eggs.Selected = Choice or (DynamicEggs[1] or "Gingerbread Egg")
+			if Settings.Eggs.Enabled then
+				Library.Variables.AutoHatchEggId = Settings.Eggs.Selected
+			end
+		end
+	})
+
+	for _, ItemName in ipairs(DynamicEggs) do
+		if ItemName == "Gingerbread Egg" then
+			Settings.Eggs.Selected = "Gingerbread Egg"
+			pcall(function()
+				Dropdowns.Egg:Set("Gingerbread Egg")
+			end)
+			break
+		end
+	end
+
+	Tabs.Eggs:CreateDropdown({
+		name = "Quantidade de Ovos",
+		description = "Abrir 1 ou 3 ovos por vez (Triple Egg)",
+		options = { "1 Ovo", "3 Ovos (Triple)" },
+		value = "1 Ovo",
+		flag = "EggAmountOption",
+		callback = function(Selected)
+			local Choice = type(Selected) == "table" and Selected[1] or Selected
+			Settings.Eggs.Amount = (Choice and Choice:find("3")) and 3 or 1
+			pcall(function()
+				local CurrentSave = Library.Save.Get()
+				if CurrentSave and CurrentSave.AutoHatchSettings then
+					CurrentSave.AutoHatchSettings.TripleEggs = (Settings.Eggs.Amount == 3)
+				end
+			end)
+		end
+	})
+
+	Tabs.Eggs:CreateSlider({
+		name = "Delay de Abertura (s)",
+		description = "Velocidade entre as aberturas de ovos",
+		range = { 0.01, 1 },
+		increment = 0.01,
+		value = 0.1,
+		suffix = "s",
+		flag = "EggDelayOption",
+		callback = function(Value)
+			Settings.Eggs.Delay = Value
+		end
+	})
+
+	Tabs.Eggs:CreateToggle({
+		name = "Fast Hatch (Sem Animação)",
+		description = "Ignora a animação pesada de abertura",
+		value = true,
+		flag = "FastHatchToggle",
+		callback = function(State)
+			Settings.Eggs.FastHatch = State
+		end
+	})
+
+	Tabs.Eggs:CreateToggle({
+		name = "Ativar Auto Open Eggs",
+		description = "Abre o ovo selecionado automaticamente",
+		value = false,
+		flag = "AutoOpenEggToggle",
+		callback = function(State)
+			Settings.Eggs.Enabled = State
+			pcall(function()
+				if not State then
+					if not Settings.Collection.Enabled then
+						Library.Variables.AutoHatchEnabled = false
+						Library.Variables.AutoHatchEggId = nil
+						local CurrentSave = Library.Save.Get()
+						if CurrentSave and CurrentSave.AutoHatchSettings then
+							CurrentSave.AutoHatchSettings.Enabled = false
+						end
+					end
+				else
+					Library.Variables.AutoHatchEnabled = true
+					Library.Variables.AutoHatchEggId = Settings.Eggs.Selected
+					local CurrentSave = Library.Save.Get()
+					if CurrentSave and CurrentSave.AutoHatchSettings then
+						CurrentSave.AutoHatchSettings.Enabled = true
+						CurrentSave.AutoHatchSettings.TripleEggs = (Settings.Eggs.Amount == 3)
+						CurrentSave.AutoHatchSettings.StopOnFailure = false
+					end
+				end
+			end)
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Auto Open Eggs",
+						content = State and ("Abrindo " .. Settings.Eggs.Selected) or "Auto Open desativado.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Collection:CreateSection({ name = "Estatísticas da Coleção" })
+	Labels.CollectionProgress = Tabs.Collection:CreateText({ name = "Progresso Total", text = "0 / 0" })
+	Labels.CollectionTier = Tabs.Collection:CreateText({ name = "Tier da Coleção", text = "Tier 0" })
+	Labels.CollectionGoal = Tabs.Collection:CreateText({ name = "Meta Próximo Tier", text = "Carregando..." })
+	Labels.CollectionMissing = Tabs.Collection:CreateText({ name = "Faltam para Próximo Tier", text = "Carregando..." })
+
+	Tabs.Collection:CreateSection({ name = "Auto Pet Collection" })
+
+	Tabs.Collection:CreateToggle({
+		name = "Ativar Auto Pet Collection",
+		description = "Abre automaticamente os ovos necessários para completar sua coleção de pets",
+		value = false,
+		flag = "AutoPetCollectionToggle",
+		callback = function(State)
+			Settings.Collection.Enabled = State
+			if not State then
+				if not Settings.Eggs.Enabled then
+					pcall(function()
+						Library.Variables.AutoHatchEnabled = false
+						Library.Variables.AutoHatchEggId = nil
+						local CurrentSave = Library.Save.Get()
+						if CurrentSave and CurrentSave.AutoHatchSettings then
+							CurrentSave.AutoHatchSettings.Enabled = false
+						end
+					end)
+				end
+				Settings.Collection.CurrentTargetPet = "Inativo"
+				Settings.Collection.CurrentTargetEgg = "Inativo"
+				UpdateLabel(Labels.CollectionTarget, "Inativo")
+				UpdateLabel(Labels.CollectionEgg, "Inativo")
+			else
+				pcall(function()
+					local CurrentSave = Library.Save.Get()
+					if CurrentSave and CurrentSave.AutoHatchSettings then
+						CurrentSave.AutoHatchSettings.TripleEggs = (Settings.Collection.Amount == 3)
+					end
+				end)
+			end
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Auto Pet Collection",
+						content = State and "Auto Pet Collection ATIVADO!" or "Auto Pet Collection DESATIVADO.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Dropdowns.CollectionAmount = Tabs.Collection:CreateDropdown({
+		name = "Quantidade de Ovos",
+		description = "Abrir 1 ou 3 ovos por vez (Triple Egg)",
+		options = { "1 Ovo", "3 Ovos (Triple)" },
+		value = "1 Ovo",
+		flag = "CollectionAmountOption",
+		callback = function(Selected)
+			local Choice = type(Selected) == "table" and Selected[1] or Selected
+			Settings.Collection.Amount = (Choice and Choice:find("3")) and 3 or 1
+			pcall(function()
+				local CurrentSave = Library.Save.Get()
+				if CurrentSave and CurrentSave.AutoHatchSettings then
+					CurrentSave.AutoHatchSettings.TripleEggs = (Settings.Collection.Amount == 3)
+				end
+			end)
+		end
+	})
+
+	Tabs.Collection:CreateToggle({
+		name = "Auto Resgatar Recompensas de Tier",
+		description = "Resgata automaticamente a recompensa de coleção assim que a meta do tier for atingida",
+		value = true,
+		flag = "AutoRedeemCollectionTierToggle",
+		callback = function(State)
+			Settings.Collection.AutoRedeem = State
+		end
+	})
+
+	Tabs.Collection:CreateSlider({
+		name = "Delay de Abertura (s)",
+		description = "Intervalo entre cada abertura de ovo da coleção",
+		range = { 0.01, 1 },
+		increment = 0.01,
+		value = 0.1,
+		suffix = "s",
+		flag = "CollectionDelaySlider",
+		callback = function(Value)
+			Settings.Collection.Delay = Value
+		end
+	})
+
+	Tabs.Collection:CreateSection({ name = "Pet e Ovo Alvo" })
+	Labels.CollectionTarget = Tabs.Collection:CreateText({ name = "Pet Alvo Atual", text = "Nenhum" })
+	Labels.CollectionEgg = Tabs.Collection:CreateText({ name = "Ovo Sendo Aberto", text = "Nenhum" })
+
+	Tabs.Collection:CreateSection({ name = "Ações Manuais" })
+
+	Tabs.Collection:CreateButton({
+		name = "Resgatar Recompensa de Tier Agora",
+		description = "Invoca o resgate da recompensa de coleção se houver tier disponível",
+		callback = function()
+			CollectionManager.RedeemReward()
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Pet Collection",
+						content = "Tentativa de resgate de recompensa enviada!",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Player:CreateSection({ name = "Otimização & Performance" })
+
+	Tabs.Player:CreateToggle({
+		name = "FPS Boost & Anti-Lag (60 FPS)",
+		description = "Remove texturas, oculta orbs e lootbags, desativa ondas de choque de moedas, moedas voando e restaura tudo ao desligar",
+		value = false,
+		flag = "FPSBoostToggle",
+		callback = function(State)
+			Settings.Performance.FPSBoost = State
+			PerformanceManager.SetFPSBoost(State)
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "FPS Boost & Anti-Lag",
+						content = State and "Otimização ATIVADA! Texturas, orbs, lootbags e efeitos removidos." or "Otimização desativada. Gráficos restaurados!",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Player:CreateSection({ name = "Hoverboards" })
+
+	Tabs.Player:CreateToggle({
+		name = "Unlock All HoverBoards",
+		description = "Permite equipar e usar qualquer hoverboard diretamente pelo menu oficial do jogo sem precisar de gamepass",
+		value = false,
+		flag = "UnlockAllHoverBoardsToggle",
+		callback = function(State)
+			Settings.Player.UnlockHoverboards = State
+			HoverboardManager.SetEnabled(State)
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Hoverboard Unlocker",
+						content = State and "Todos os hoverboards foram desbloqueados! Abra o menu oficial para equipar." or "Desbloqueador desativado.",
+						duration = 3
+					})
+				end)
+			end
+		end
+	})
+
+	Tabs.Player:CreateSection({ name = "Velocidade e Movimento" })
+
+	Tabs.Player:CreateSlider({
+		name = "Velocidade de Caminhada (WalkSpeed)",
+		description = "Ajusta a velocidade de movimento do personagem",
+		range = { 16, 250 },
+		increment = 1,
+		value = 16,
+		flag = "PlayerWalkSpeedSlider",
+		callback = function(Value)
+			Settings.Player.WalkSpeed = Value
+			local _, _, Humanoid = GetCharacter()
+			if Humanoid and Settings.Player.SpeedEnabled then
+				Humanoid.WalkSpeed = Value
+			end
+		end
+	})
+
+	Tabs.Player:CreateToggle({
+		name = "Ativar Velocidade Customizada",
+		value = false,
+		flag = "CustomSpeedToggle",
+		callback = function(State)
+			Settings.Player.SpeedEnabled = State
+			local _, _, Humanoid = GetCharacter()
+			if Humanoid then
+				Humanoid.WalkSpeed = State and Settings.Player.WalkSpeed or 16
+			end
+		end
+	})
+
+	Tabs.Player:CreateToggle({
+		name = "Pulo Infinito (Infinite Jump)",
+		description = "Permite pular continuamente no ar",
+		value = false,
+		flag = "InfiniteJumpToggle",
+		callback = function(State)
+			Settings.Player.InfiniteJump = State
+		end
+	})
+
+	Tabs.Player:CreateSection({ name = "Anti-AFK" })
+
+	Tabs.Player:CreateToggle({
+		name = "Anti-AFK (Pula a cada 2s)",
+		description = "Faz o personagem pular sozinho a cada 2 segundos e previne desconexão",
+		value = true,
+		flag = "AntiAfkToggle",
+		callback = function(State)
+			Settings.Player.AntiAfk = State
+		end
+	})
+
+	Tabs.Christmas:CreateSection({ name = "Moedas & Progresso do Natal" })
+	Labels.Gingerbread = Tabs.Christmas:CreateText({ name = "Moedas de Natal (Gingerbread)", text = "0" })
+
+	Tabs.Christmas:CreateSection({ name = "Missão Atual de Natal" })
+	Labels.QuestTitle = Tabs.Christmas:CreateText({ name = "Título da Missão", text = "Carregando..." })
+	Labels.QuestDesc = Tabs.Christmas:CreateText({ name = "Objetivo", text = "Carregando..." })
+	Labels.QuestReward = Tabs.Christmas:CreateText({ name = "Recompensa", text = "Carregando..." })
+
+	Tabs.Christmas:CreateSection({ name = "Distância do Objetivo" })
+	Labels.QuestDistance = Tabs.Christmas:CreateText({ name = "Faltam para Completar (Valor)", text = "0" })
+	Labels.QuestPercent = Tabs.Christmas:CreateText({ name = "Progresso em Porcentagem (%)", text = "0%" })
+end
+
+UserInputService.JumpRequest:Connect(function()
+	if Settings.Player.InfiniteJump then
+		local _, _, Humanoid = GetCharacter()
+		if Humanoid then
+			Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if Settings.Player.SpeedEnabled then
+		local _, _, Humanoid = GetCharacter()
+		if Humanoid and Humanoid.WalkSpeed ~= Settings.Player.WalkSpeed then
+			Humanoid.WalkSpeed = Settings.Player.WalkSpeed
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(2)
+		if Settings.Player.AntiAfk then
+			pcall(function()
+				local _, _, Humanoid = GetCharacter()
+				if Humanoid and Humanoid.Health > 0 then
+					Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+				end
+			end)
+		end
+	end
+end)
+
+Player.Idled:Connect(function()
+	if Settings.Player.AntiAfk then
+		pcall(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new())
+		end)
+	end
+end)
+
+task.spawn(function()
+	local LastKnownWorld = ""
+	while true do
+		task.wait(1.5)
+
+		UpdateLabel(Labels.Pets, tostring(#PetOperations.GetEquippedIds()))
+		UpdateLabel(Labels.Candies, tostring(CoinScanner.CountCandies()))
+
+		local CurrentZoneWorld = Library.WorldCmds.Get() or "Desconhecido"
+		if CurrentZoneWorld ~= LastKnownWorld then
+			LastKnownWorld = CurrentZoneWorld
+			Settings.CandyFarm.CurrentWorld = CurrentZoneWorld
+			UpdateLabel(Labels.World, tostring(CurrentZoneWorld))
+
+			if Dropdowns.Egg and Dropdowns.Egg.Refresh then
+				pcall(function() Dropdowns.Egg:Refresh(DirectoryScanner.GetAvailableEggs()) end)
+			end
+			if Dropdowns.FarmArea and Dropdowns.FarmArea.Refresh then
+				pcall(function() Dropdowns.FarmArea:Refresh(DirectoryScanner.GetZoneNames()) end)
+			end
+
+			if Window then
+				pcall(function()
+					Window:Notify({
+						title = "Mundo Alterado",
+						content = "Mundo detectado: " .. tostring(CurrentZoneWorld),
+						duration = 3
+					})
+				end)
+			end
+		end
+
+		pcall(function()
+			local SaveData = Library.Save.Get()
+			if SaveData then
+				UpdateLabel(Labels.Gingerbread, Library.Functions.Commas(SaveData.Gingerbread or 0) .. " Gingerbread")
+
+				local QuestInformation = SaveData.ChristmasEventQuest
+				if QuestInformation then
+					local StageIndex = QuestInformation.Stage or 1
+					local CurrentProgress = QuestInformation.Progress or 0
+					local Template = Library.Shared and Library.Shared.ChristmasEventQuests and Library.Shared.ChristmasEventQuests[StageIndex]
+
+					if Template then
+						local TotalRequired = Template.Needed or 1
+						local UnitsRemaining = math.max(0, TotalRequired - CurrentProgress)
+						local Percentage = math.clamp(math.floor((CurrentProgress / TotalRequired) * 100), 0, 100)
+
+						UpdateLabel(Labels.QuestTitle, "Missão #" .. StageIndex)
+						UpdateLabel(Labels.QuestDesc, tostring(Template.Desc) .. " (" .. Library.Functions.Commas(CurrentProgress) .. " / " .. Library.Functions.Commas(TotalRequired) .. ")")
+
+						local RewardDescriptor = "Nenhuma"
+						if Template.Reward then
+							local RewardType, RewardQty = unpack(Template.Reward)
+							RewardDescriptor = RewardQty and (tostring(RewardType) .. " x" .. Library.Functions.Commas(RewardQty)) or tostring(RewardType)
+						end
+						UpdateLabel(Labels.QuestReward, RewardDescriptor)
+						UpdateLabel(Labels.QuestDistance, Library.Functions.Commas(UnitsRemaining) .. " restantes")
+						UpdateLabel(Labels.QuestPercent, tostring(Percentage) .. "% concluído")
+					else
+						UpdateLabel(Labels.QuestTitle, "Missões Concluídas!")
+						UpdateLabel(Labels.QuestDesc, "Todas as missões foram finalizadas!")
+						UpdateLabel(Labels.QuestReward, "Nenhuma")
+						UpdateLabel(Labels.QuestDistance, "0 (Completado)")
+						UpdateLabel(Labels.QuestPercent, "100%")
+					end
+				end
+			end
+		end)
+
+		pcall(function()
+			local CollectedCount, TotalCollectable, Tier, NextGoal, CanRedeem = CollectionManager.GetStats()
+			UpdateLabel(Labels.CollectionProgress, Library.Functions.Commas(CollectedCount) .. " / " .. Library.Functions.Commas(TotalCollectable))
+			UpdateLabel(Labels.CollectionTier, "Tier " .. tostring(Tier))
+			UpdateLabel(Labels.CollectionGoal, NextGoal > 0 and (Library.Functions.Commas(NextGoal) .. " Pets") or "Meta Máxima Atingida")
+			local RemainingToGoal = math.max(0, NextGoal - CollectedCount)
+			UpdateLabel(Labels.CollectionMissing, NextGoal > 0 and (Library.Functions.Commas(RemainingToGoal) .. " pets para o próximo tier") or "0 pets restantes")
+
+			if Settings.Collection.AutoRedeem and CanRedeem then
+				CollectionManager.RedeemReward()
+			end
+		end)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		if Settings.Enchant.Enabled then
+			local SelectedPower = Settings.Enchant.Selected or "Royalty"
+			local EquippedList = {}
+
+			pcall(function()
+				local EquippedData = Library.PetCmds.GetEquipped(Player)
+				if EquippedData then
+					for _, PetObj in ipairs(EquippedData) do
+						table.insert(EquippedList, PetObj.uid)
+					end
+				end
+			end)
+
+			if #EquippedList == 0 then
+				UpdateLabel(Labels.EnchantStatus, "Nenhum pet equipado!")
+				task.wait(1)
+			else
+				local IncompletePets = 0
+
+				for _, PetUid in ipairs(EquippedList) do
+					if not Settings.Enchant.Enabled then break end
+
+					local PetData = nil
+					local SaveData = Library.Save.Get()
+					if SaveData and SaveData.Pets then
+						for _, Record in pairs(SaveData.Pets) do
+							if Record.uid == PetUid then
+								PetData = Record
+								break
+							end
+						end
+					end
+					if not PetData then
+						PetData = Library.PetCmds.Get(PetUid)
+					end
+
+					if PetData and not PetOperations.CheckEnchant(PetData, SelectedPower) then
+						IncompletePets = IncompletePets + 1
+						local DisplayName = PetData.nk or PetData.id or "Pet"
+						UpdateLabel(Labels.EnchantStatus, "Rolando: " .. tostring(DisplayName) .. " -> " .. SelectedPower)
+
+						local Success, ResponseError = Library.Network.Invoke("Enchant Pet", PetUid)
+						if not Success then
+							UpdateLabel(Labels.EnchantStatus, "Erro: " .. tostring(ResponseError or "Diamantes insuficientes"))
+							task.wait(1)
+							break
+						end
+						task.wait()
+					end
+				end
+
+				if IncompletePets == 0 then
+					UpdateLabel(Labels.EnchantStatus, "Todos os pets equipados possuem " .. SelectedPower .. "!")
+					task.wait(1)
+				end
+			end
+		else
+			task.wait(0.5)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(3)
+
+		if Settings.Boosts.AutoUse then
+			pcall(function()
+				local SaveData = Library.Save.Get()
+				if SaveData and SaveData.BoostsInventory then
+					local RunningBoosts = SaveData.Boosts or {}
+
+					for BoostKey, IsWanted in pairs(Settings.Boosts.Active) do
+						if IsWanted then
+							local TimeLeft = RunningBoosts[BoostKey] or 0
+							if TimeLeft <= 10 then
+								local StoredAmount = SaveData.BoostsInventory[BoostKey] or 0
+								if StoredAmount > 0 then
+									Library.Network.Fire("Activate Boost", BoostKey)
+									task.wait(0.5)
+								elseif Settings.Boosts.AutoBuy then
+									pcall(function()
+										local PurchaseSuccess = Library.Network.Invoke("Purchase Boosts", BoostKey, false)
+										if PurchaseSuccess then
+											task.wait(0.5)
+											Library.Network.Fire("Activate Boost", BoostKey)
+										end
+									end)
+									task.wait(0.5)
+								end
+							end
+						end
+					end
+				end
+			end)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(15)
+
+		if Settings.Rewards.Rank then
+			pcall(function() Library.Network.Invoke("Redeem Rank Rewards") end)
+		end
+
+		if Settings.Rewards.VIP then
+			pcall(function() Library.Network.Invoke("Redeem VIP Rewards") end)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+
+		if not Settings.AreaFarm.Enabled then
+			task.wait(0.5)
+			continue
+		end
+
+		if not Library.WorldCmds.HasLoaded() then
+			task.wait(1)
+			continue
+		end
+
+		local RegisteredZones = DirectoryScanner.GetOrderedZones()
+		local MatchedZone = nil
+		for _, Zone in ipairs(RegisteredZones) do
+			if string.lower(Zone.name) == string.lower(Settings.AreaFarm.SelectedArea) then
+				MatchedZone = Zone
+				break
+			end
+		end
+
+		if not MatchedZone and #RegisteredZones > 0 then
+			MatchedZone = RegisteredZones[1]
+		end
+
+		if MatchedZone then
+			local NearbyCoins = CoinScanner.GetAreaCoins(MatchedZone)
+			local PlayerPets = PetOperations.GetEquippedIds()
+
+			if #NearbyCoins > 0 and #PlayerPets > 0 then
+				for Index = 1, math.min(#PlayerPets, #NearbyCoins) do
+					if not Settings.AreaFarm.Enabled then break end
+
+					local TargetEntity = NearbyCoins[Index]
+					local AssignedPet = PlayerPets[Index]
+
+					if TargetEntity and TargetEntity.Parent and AssignedPet then
+						PetOperations.AssignPets(TargetEntity, { AssignedPet })
+						task.wait(Settings.AreaFarm.PetDelay or 0.5)
+					end
+				end
+			end
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		if Settings.Eggs.Enabled and Settings.Eggs.Selected and Settings.Eggs.Selected ~= "" then
+			pcall(function()
+				local IsTripleMode = (Settings.Eggs.Amount == 3)
+				if Settings.Eggs.FastHatch then
+					Library.Variables.OpeningEgg = false
+				end
+				Library.Variables.AutoHatchEggId = Settings.Eggs.Selected
+				Library.Variables.AutoHatchEnabled = true
+				Library.Network.Invoke("Buy Egg", Settings.Eggs.Selected, IsTripleMode)
+			end)
+			task.wait(Settings.Eggs.Delay or 0.1)
+		else
+			task.wait(0.5)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		if Settings.Collection.Enabled then
+			local Missing, Status = CollectionManager.GetNextMissingPet()
+			if Status == "ready" and Missing then
+				Settings.Collection.CurrentTargetPet = Missing.PetName
+				Settings.Collection.CurrentTargetEgg = Missing.TargetEgg
+				Settings.Collection.CurrentTargetVariant = Missing.VariantName
+
+				local IsTriple = Missing.UseTriple
+				UpdateLabel(Labels.CollectionTarget, Missing.PetName .. " [" .. Missing.VariantName .. "]")
+				UpdateLabel(Labels.CollectionEgg, Missing.TargetEgg .. (IsTriple and " (3x)" or " (1x)"))
+
+				local Success, Response = pcall(function()
+					Library.Variables.OpeningEgg = false
+					Library.Variables.AutoHatchEggId = Missing.TargetEgg
+					Library.Variables.AutoHatchEnabled = true
+					local CurrentSave = Library.Save.Get()
+					if CurrentSave and CurrentSave.AutoHatchSettings then
+						CurrentSave.AutoHatchSettings.Enabled = true
+						CurrentSave.AutoHatchSettings.TripleEggs = (IsTriple == true)
+						CurrentSave.AutoHatchSettings.StopOnFailure = false
+					end
+					return Library.Network.Invoke("Buy Egg", Missing.TargetEgg, IsTriple)
+				end)
+
+				if Success and Response == false then
+					CollectionManager.BlacklistEgg(Missing.TargetEgg, 15)
+				end
+
+				task.wait(Settings.Collection.Delay or 0.1)
+			elseif Status == "unaffordable" and Missing then
+				Settings.Collection.CurrentTargetPet = "Sem Moedas"
+				Settings.Collection.CurrentTargetEgg = Missing.TargetEgg
+				Settings.Collection.CurrentTargetVariant = "Aguardando"
+				UpdateLabel(Labels.CollectionTarget, "Moedas Insuficientes")
+				UpdateLabel(Labels.CollectionEgg, "Necessário moedas para: " .. Missing.TargetEgg)
+				task.wait(2)
+			else
+				Settings.Collection.CurrentTargetPet = "Nenhum"
+				Settings.Collection.CurrentTargetEgg = "Nenhum"
+				Settings.Collection.CurrentTargetVariant = "Nenhum"
+				UpdateLabel(Labels.CollectionTarget, "Coleção Completa!")
+				UpdateLabel(Labels.CollectionEgg, "Todos os pets obtidos")
+				task.wait(2)
+			end
+		else
+			task.wait(0.5)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+
+		if not Settings.CandyFarm.Enabled then
+			task.wait(0.5)
+			continue
+		end
+
+		if not Library.WorldCmds.HasLoaded() then
+			task.wait(1)
+			continue
+		end
+
+		local CurrentWorldIdentifier = Library.WorldCmds.Get() or ""
+		local OrderedZones = DirectoryScanner.GetOrderedZones()
+		if #OrderedZones == 0 then
+			task.wait(2)
+			continue
+		end
+
+		for ZoneIndex, ZoneData in ipairs(OrderedZones) do
+			if not Settings.CandyFarm.Enabled then break end
+			if Library.WorldCmds.Get() ~= CurrentWorldIdentifier then break end
+
+			Settings.CandyFarm.CurrentArea = ZoneData.name
+			UpdateLabel(Labels.Area, ZoneData.name .. " (" .. ZoneIndex .. "/" .. #OrderedZones .. ")")
+			task.wait(0.5)
+
+			local IdleTimer = 0
+			while Settings.CandyFarm.Enabled and (Library.WorldCmds.Get() == CurrentWorldIdentifier) do
+				local CandiesFound = {}
+				for _, CoinNode in ipairs(CoinsFolder:GetChildren()) do
+					if CoinScanner.IsCandyCane(CoinNode) then
+						local PositionPart = CoinNode:FindFirstChild("POS")
+						local AssignedZone = CoinNode:GetAttribute("Area")
+						if (AssignedZone and string.lower(AssignedZone) == string.lower(ZoneData.name)) or (PositionPart and (PositionPart.Position - ZoneData.position).Magnitude <= 190) then
+							table.insert(CandiesFound, CoinNode)
+						end
+					end
+				end
+
+				if #CandiesFound > 0 then
+					IdleTimer = 0
+					local AvailablePets = PetOperations.GetEquippedIds()
+					if #AvailablePets > 0 then
+						for Index = 1, math.min(#AvailablePets, #CandiesFound) do
+							if not Settings.CandyFarm.Enabled then break end
+							local TargetCoin = CandiesFound[Index]
+							local TargetPet = AvailablePets[Index]
+							if TargetCoin and TargetCoin.Parent and TargetPet then
+								PetOperations.AssignPets(TargetCoin, { TargetPet })
+								task.wait(0.5)
+							end
+						end
+					end
+
+					local TimeoutClock = os.clock()
+					while Settings.CandyFarm.Enabled and #CandiesFound > 0 and (os.clock() - TimeoutClock < 3.5) do
+						task.wait(0.5)
+						local Remaining = {}
+						for _, CoinEntry in ipairs(CandiesFound) do
+							if CoinEntry and CoinEntry.Parent == CoinsFolder then
+								table.insert(Remaining, CoinEntry)
+							end
+						end
+						CandiesFound = Remaining
+					end
+				else
+					IdleTimer = IdleTimer + 1
+					if IdleTimer >= Settings.CandyFarm.EmptyTimeout then
+						break
+					end
+					task.wait(1)
+				end
+			end
+			task.wait(0.5)
+		end
+	end
+end)
+
+workspace.CurrentCamera.ChildAdded:Connect(function(Child)
+	if Settings.Eggs.FastHatch or Settings.Collection.Enabled then
+		task.defer(function()
+			if Child.Name ~= "Camera" and not Child:IsA("Camera") then
+				if Child:IsA("BasePart") then
+					Child.Transparency = 1
+					Child.CastShadow = false
+				elseif Child:IsA("PointLight") then
+					Child.Enabled = false
+				elseif Child:IsA("ParticleEmitter") or Child:IsA("Trail") or Child:IsA("Beam") then
+					Child.Enabled = false
+				end
+				for _, Sub in ipairs(Child:GetDescendants()) do
+					if Sub:IsA("BasePart") then
+						Sub.Transparency = 1
+						Sub.CastShadow = false
+					elseif Sub:IsA("PointLight") then
+						Sub.Enabled = false
+					elseif Sub:IsA("ParticleEmitter") or Sub:IsA("Trail") or Sub:IsA("Beam") then
+						Sub.Enabled = false
+					end
+				end
+			end
+		end)
+	end
+end)
+
+Lighting.ChildAdded:Connect(function(Child)
+	if (Settings.Eggs.FastHatch or Settings.Collection.Enabled) and Child:IsA("DepthOfFieldEffect") then
+		pcall(function() Child:Destroy() end)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.25)
+		if Settings.Eggs.FastHatch or Settings.Collection.Enabled then
+			Library.Variables.OpeningEgg = false
+			if Library.GUI and Library.GUI.EggOpenInfo and Library.GUI.EggOpenInfo.Gui then
+				if Library.GUI.EggOpenInfo.Gui.Enabled then
+					Library.GUI.EggOpenInfo.Gui.Enabled = false
+				end
+			end
+		end
+	end
+end)
+
+Library.Network.Fired("Open Egg"):Connect(function(EggId, HatchedPets)
+	if type(HatchedPets) == "table" then
+		local SaveData = Library.Save.Get()
+		local AutoDeleteConfig = SaveData and SaveData.Settings and SaveData.Settings.AutoDelete
+		if AutoDeleteConfig then
+			local DeleteList = {}
+			for _, PetEntry in ipairs(HatchedPets) do
+				if PetEntry and PetEntry.id and PetEntry.uid then
+					local DirectoryData = Library.Directory.Pets[PetEntry.id]
+					if DirectoryData and DirectoryData.rarity then
+						local RarityString = tostring(DirectoryData.rarity)
+						if AutoDeleteConfig[RarityString] then
+							table.insert(DeleteList, tostring(PetEntry.uid))
+						end
+					end
+				end
+			end
+			if #DeleteList > 0 then
+				task.spawn(function()
+					pcall(function()
+						Library.Network.Invoke("Delete Several Pets", DeleteList)
+					end)
+				end)
+			end
+		end
+	end
+end)
